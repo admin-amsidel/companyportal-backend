@@ -1,0 +1,11 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.entity;
+
+/** Who the money is with. */
+public enum TradeParty {
+    CUSTOMER,
+    SUPPLIER
+}

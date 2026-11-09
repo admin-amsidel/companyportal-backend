@@ -1,0 +1,103 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.dto;
+
+import com.companyportal.backend.entity.Brand;
+import com.companyportal.backend.entity.Designation;
+import com.companyportal.backend.entity.Employee;
+import com.companyportal.backend.entity.Role;
+
+import java.time.Instant;
+import java.time.LocalDate;
+
+/** Employee as sent to the web app; never includes the PIN hash or lockout counters. */
+public record EmployeeResponse(
+        Long id,
+        String empNumber,
+        String userId,
+        String name,
+        Role role,
+        Long brandId,
+        String brandCode,
+        String brandName,
+        Long designationId,
+        String designationName,
+        Integer levelNumber,
+        String levelCode,
+        Long reportsToId,
+        String reportsToName,
+        Long approverId,
+        String approverName,
+        String address,
+        String phone,
+        String photoPath,
+        Instant photoUpdatedAt,
+        LocalDate joinedDate,
+        LocalDate dob,
+        String bloodGroup,
+        String personalEmail,
+        String companyEmail,
+        String emergencyContact,
+        boolean active,
+        boolean mustChangePassword,
+        boolean autoApproveReports,
+        /** Documents that may be uploaded for them in a month; null = the company default. */
+        Integer documentUploadLimit,
+        boolean locked,
+        /** When the account locked after too many wrong PINs (it stays locked until a temporary PIN is set). */
+        Instant lockedAt,
+        Instant lastLoginAt,
+        Long userTypeId,
+        String userTypeName,
+        /** The last sign-in ran out or was ended. */
+        boolean sessionExpired,
+        /** Their brand's time zone, which their times are shown in; null = the company's default (India). */
+        String timeZone) {
+
+    /** Call inside a transaction: reads the brand, designation and manager. */
+    public static EmployeeResponse from(Employee e) {
+        Brand b = e.getBrand();
+        Designation d = e.getDesignation();
+        Employee boss = e.getReportsTo();
+        return new EmployeeResponse(
+                e.getId(),
+                e.getEmpNumber(),
+                e.getUserId(),
+                e.getName(),
+                e.getRole(),
+                b == null ? null : b.getId(),
+                b == null ? null : b.getCode(),
+                b == null ? null : b.getName(),
+                d == null ? null : d.getId(),
+                d == null ? null : d.getName(),
+                d == null ? null : d.getLevelNumber(),
+                d == null ? null : d.getLevelCode(),
+                boss == null ? null : boss.getId(),
+                boss == null ? null : boss.getName(),
+                e.getApprover() == null ? null : e.getApprover().getId(),
+                e.getApprover() == null ? null : e.getApprover().getName(),
+                e.getAddress(),
+                e.getPhone(),
+                e.getPhotoPath(),
+                e.getPhotoUpdatedAt(),
+                e.getJoinedDate(),
+                e.getDob(),
+                e.getBloodGroup(),
+                e.getPersonalEmail(),
+                e.getCompanyEmail(),
+                e.getEmergencyContact(),
+                e.isActive(),
+                e.isMustChangePassword(),
+                Boolean.TRUE.equals(e.getAutoApproveReports()),
+                e.getDocumentUploadLimit(),
+                e.getLockedAt() != null || (e.getLockedUntil() != null && e.getLockedUntil().isAfter(Instant.now())),
+                e.getLockedAt(),
+                e.getLastLoginAt(),
+                e.getUserType() == null ? null : e.getUserType().getId(),
+                e.getUserType() == null ? null : e.getUserType().getName(),
+                Boolean.TRUE.equals(e.getSessionExpired()),
+                e.getBrand() == null ? null : e.getBrand().getTimeZone());
+    }
+}

@@ -1,0 +1,52 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.controller;
+
+import com.companyportal.backend.dto.DesignationRequest;
+import com.companyportal.backend.dto.DesignationView;
+import com.companyportal.backend.service.DesignationService;
+import jakarta.validation.Valid;
+import com.companyportal.backend.security.Checkpoint;
+import com.companyportal.backend.security.Menus;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.List;
+
+/** Everyone signed in can read designations; changing them needs the Designations menu. */
+@RestController
+@RequestMapping("/api/designations")
+@RequiredArgsConstructor
+public class DesignationController {
+
+    private final DesignationService designationService;
+
+    @GetMapping
+    public List<DesignationView> list() {
+        return designationService.findAll();
+    }
+
+    @Checkpoint({Menus.DESIGNATIONS})
+    @PostMapping
+    @ResponseStatus(HttpStatus.CREATED)
+    public DesignationView create(@Valid @RequestBody DesignationRequest request) {
+        return designationService.create(request);
+    }
+
+    /** Only one no employee has. */
+    @Checkpoint({Menus.DESIGNATIONS})
+    @DeleteMapping("/{id}")
+    @ResponseStatus(org.springframework.http.HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
+        designationService.delete(id);
+    }
+
+    @Checkpoint({Menus.DESIGNATIONS})
+    @PutMapping("/{id}")
+    public DesignationView update(@PathVariable Long id, @Valid @RequestBody DesignationRequest request) {
+        return designationService.update(id, request);
+    }
+}

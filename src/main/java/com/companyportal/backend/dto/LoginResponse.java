@@ -1,0 +1,17 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.dto;
+
+import com.companyportal.backend.security.AsdTokenResolver;
+
+import java.time.Instant;
+
+/** Answer to a successful login or PIN change: send the token as "Authorization: asd &lt;token&gt;". */
+public record LoginResponse(String token, String tokenType, Instant expiresAt, EmployeeResponse user) {
+
+    public static LoginResponse of(String token, Instant expiresAt, EmployeeResponse user) {
+        return new LoginResponse(token, AsdTokenResolver.SCHEME, expiresAt, user);
+    }
+}

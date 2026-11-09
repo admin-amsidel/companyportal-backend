@@ -1,0 +1,83 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.entity;
+
+import jakarta.persistence.*;
+import lombok.Getter;
+import lombok.NoArgsConstructor;
+import lombok.Setter;
+
+import java.time.LocalDate;
+
+/** A sub-task of a goal: its weight in the goal (the goal's tasks add up to 100%), dates and % done; for a sales goal, its target amount. */
+@Entity
+@Table(name = "goal_tasks")
+@Getter
+@Setter
+@NoArgsConstructor
+public class GoalTask {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    private Long id;
+
+    @ManyToOne(fetch = FetchType.LAZY, optional = false)
+    @JoinColumn(name = "goal_id", nullable = false)
+    private Goal goal;
+
+    @Column(nullable = false, length = 150)
+    private String title;
+
+    /** % of the goal, 1-100. */
+    @Column(nullable = false)
+    private int weightage;
+
+    @Column(nullable = false)
+    private LocalDate startDate;
+
+    @Column(nullable = false)
+    private LocalDate endDate;
+
+    /** % done, 0-100. */
+    @Column(nullable = false)
+    private int progress;
+
+    /** Sales goals: this sub-task's share of the goal's target amount. */
+    @Column(name = "target_amount", precision = 14, scale = 2)
+    private java.math.BigDecimal targetAmount;
+
+    @Column(name = "sort_order", nullable = false)
+    private int sortOrder;
+
+    // ---- task worklog goals: the work log task, marked complete with a self rating, then reviewed ----
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "work_task_id")
+    private WorkTask workTask;
+
+    /** When the person marked it complete; null = not complete. */
+    @Column(name = "completed_at")
+    private java.time.Instant completedAt;
+
+    /** 0.5-5 in half stars. */
+    @Column(name = "self_rating", precision = 3, scale = 1)
+    private java.math.BigDecimal selfRating;
+
+    @Column(name = "self_comment", length = 2000)
+    private String selfComment;
+
+    @Column(name = "manager_rating", precision = 3, scale = 1)
+    private java.math.BigDecimal managerRating;
+
+    @Column(name = "manager_comment", length = 2000)
+    private String managerComment;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "manager_rated_by_id")
+    private Employee managerRatedBy;
+
+    @Column(name = "manager_rated_at")
+    private java.time.Instant managerRatedAt;
+}

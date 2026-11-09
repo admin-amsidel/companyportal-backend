@@ -1,0 +1,23 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.dto;
+
+import com.companyportal.backend.entity.OfficeHoliday;
+
+import java.time.LocalDate;
+
+public record OfficeHolidayResponse(Long id, LocalDate date, String name, Long brandId, String brandCode, String brandName) {
+
+    /** Call inside a transaction: reads the brand. */
+    public static OfficeHolidayResponse from(OfficeHoliday h) {
+        return new OfficeHolidayResponse(
+                h.getId(),
+                h.getHolidayDate(),
+                h.getName(),
+                h.getBrand() == null ? null : h.getBrand().getId(),
+                h.getBrand() == null ? null : h.getBrand().getCode(),
+                h.getBrand() == null ? null : h.getBrand().getName());
+    }
+}

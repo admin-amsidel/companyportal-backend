@@ -1,0 +1,21 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.repository;
+
+import com.companyportal.backend.entity.AccessSubject;
+import com.companyportal.backend.entity.MenuAccess;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+
+public interface MenuAccessRepository extends JpaRepository<MenuAccess, Long> {
+
+    @Modifying
+    @Query("delete from MenuAccess a where a.subjectType = :type and a.subjectKey = :key")
+    void deleteSubject(@Param("type") AccessSubject type, @Param("key") String key);
+
+    boolean existsBySubjectTypeAndSubjectKeyAndCheckpoint(AccessSubject subjectType, String subjectKey, String checkpoint);
+}

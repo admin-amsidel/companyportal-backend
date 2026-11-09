@@ -1,0 +1,255 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.service;
+
+import com.companyportal.backend.dto.MyTask;
+import com.companyportal.backend.dto.TaskRequest;
+import com.companyportal.backend.dto.TaskResponse;
+import com.companyportal.backend.entity.*;
+import com.companyportal.backend.exception.ApiException;
+import com.companyportal.backend.exception.ResourceNotFoundException;
+import com.companyportal.backend.repository.BrandRepository;
+import com.companyportal.backend.repository.CustomerRepository;
+import com.companyportal.backend.repository.EmployeeRepository;
+import com.companyportal.backend.repository.ManualSalesTaskRepository;
+import com.companyportal.backend.repository.WorkLogRepository;
+import com.companyportal.backend.repository.WorkTaskRepository;
+import com.companyportal.backend.security.AuthUser;
+import com.companyportal.backend.security.Menus;
+import lombok.RequiredArgsConstructor;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+
+import java.math.BigDecimal;
+import java.util.*;
+
+/**
+ * Tasks that owners and admins create and assign; employees log hours only against open tasks assigned to them.
+ * Owners and group admins see every task; a brand admin sees group-wide tasks and their brand's, and assigns
+ * only people of their brand.
+ */
+@Service
+@RequiredArgsConstructor
+public class TaskService {
+
+    private static final String PREFIX = "TSK-";
+    private static final String MANUAL_SALES_PREFIX = "MS-";
+
+    private final WorkTaskRepository taskRepository;
+    private final EmployeeRepository employeeRepository;
+    private final BrandRepository brandRepository;
+    private final WorkLogRepository logRepository;
+    private final CustomerRepository customerRepository;
+    private final PerformanceService performance;
+    private final ManualSalesTaskRepository manualSalesTasks;
+    private final MenuAccessService menuAccess;
+
+    @Transactional(readOnly = true)
+    public List<TaskResponse> list(AuthUser me, TaskStatus status) {
+        Map<Long, BigDecimal> hours = hoursPerTask();
+        return taskRepository.search(status).stream()
+                .filter(t -> inScope(me, t.getBrand()))
+                .map(t -> TaskResponse.from(t, hours.getOrDefault(t.getId(), BigDecimal.ZERO)))
+                .toList();
+    }
+
+    /**
+     * The customers a task may be for: every brand's for owners and group admins, their own brand's for a brand
+     * admin. Only what the Customer ID picker needs, so people with Tasks but not the Customers menu can choose one.
+     */
+    @Transactional(readOnly = true)
+    public List<TaskResponse.CustomerOption> customers(AuthUser me) {
+        Long scope = me.isOwner() || me.brandId() == null ? null : me.brandId();
+        return customerRepository.forBrand(scope).stream()
+                .map(c -> new TaskResponse.CustomerOption(c.getId(), c.getCode(), c.getName(), c.getPhone(),
+                        c.getBrand().getId(), c.getBrand().getCode(), c.isActive()))
+                .toList();
+    }
+
+    @Transactional(readOnly = true)
+    public List<MyTask> mine(AuthUser me) {
+        // a Manual Sales task is there only for someone given that tick
+        boolean manual = menuAccess.can(me, Menus.MANUAL_SALES_LOG);
+        return taskRepository.assignedTo(me.id(), TaskStatus.OPEN).stream()
+                .filter(t -> !t.isManualSalesTask() || manual)
+                .map(t -> {
+                    if (!t.isManualSalesTask()) {
+                        return MyTask.from(t);
+                    }
+                    var info = manualSalesTasks.findById(t.getId()).orElse(null);
+                    Brand brand = t.getBrand() != null ? t.getBrand() : employeeRepository.findWithBrandById(me.id()).map(Employee::getBrand).orElse(null);
+                    return MyTask.manual(t, ManualSalesService.symbol(brand), info == null ? null : info.getCustomerName(),
+                            info == null ? null : info.getProjectName(), info == null ? null : info.getAgentName());
+                }).toList();
+    }
+
+    @Transactional
+    public TaskResponse create(AuthUser me, TaskRequest request) {
+        WorkTask task = new WorkTask();
+        task.setCreatedBy(employeeRepository.findById(me.id())
+                .orElseThrow(() -> new ResourceNotFoundException("Employee not found: " + me.id())));
+        apply(me, task, request);
+        WorkTask saved = taskRepository.saveAndFlush(task);
+        performance.tasksChanged(saved.getAssignees().stream().map(Employee::getId).toList());
+        return TaskResponse.from(saved, BigDecimal.ZERO);
+    }
+
+    @Transactional
+    public TaskResponse update(AuthUser me, Long id, TaskRequest request) {
+        WorkTask task = taskRepository.findFull(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + id));
+        if (task.isManualSalesTask()) {
+            throw ApiException.badRequest("Change " + task.getCode() + " under Manual sales tasks");
+        }
+        if (!inScope(me, task.getBrand())) {
+            throw ApiException.forbidden("You can only change tasks of your own brand");
+        }
+        // those taken off the task too: their goal may lose it
+        Set<Long> people = new HashSet<>(task.getAssignees().stream().map(Employee::getId).toList());
+        apply(me, task, request);
+        taskRepository.saveAndFlush(task);
+        task.getAssignees().forEach(e -> people.add(e.getId()));
+        performance.tasksChanged(people);
+        return TaskResponse.from(task, hoursPerTask().getOrDefault(task.getId(), BigDecimal.ZERO));
+    }
+
+    /** A Manual Sales worklog task: a work log task with an MS-0001 style code, on no Task worklog goal. */
+    @Transactional
+    public WorkTask createManual(AuthUser me, TaskRequest request) {
+        WorkTask task = new WorkTask();
+        task.setManualSales(true);
+        task.setCreatedBy(employeeRepository.findById(me.id())
+                .orElseThrow(() -> new ResourceNotFoundException("Employee not found: " + me.id())));
+        apply(me, task, request);
+        return taskRepository.saveAndFlush(task);
+    }
+
+    @Transactional
+    public WorkTask updateManual(AuthUser me, Long id, TaskRequest request) {
+        WorkTask task = taskRepository.findFull(id).filter(WorkTask::isManualSalesTask)
+                .orElseThrow(() -> new ResourceNotFoundException("Manual sales task not found: " + id));
+        if (!inScope(me, task.getBrand())) {
+            throw ApiException.forbidden("You can only change tasks of your own brand");
+        }
+        apply(me, task, request);
+        return taskRepository.saveAndFlush(task);
+    }
+
+    /** The task with every work log entry against it, for those who see the task (the task's page). */
+    @Transactional(readOnly = true)
+    public TaskResponse.TaskLogs logs(AuthUser me, Long id) {
+        WorkTask task = taskRepository.findFull(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + id));
+        if (!inScope(me, task.getBrand())) {
+            throw ApiException.forbidden("You can only see tasks of your own brand");
+        }
+        List<TaskResponse.LogEntry> entries = logRepository.forTask(id).stream().filter(com.companyportal.backend.entity.WorkLog::counts).map(TaskResponse.LogEntry::from).toList();
+        BigDecimal total = entries.stream().map(TaskResponse.LogEntry::hours).reduce(BigDecimal.ZERO, BigDecimal::add);
+        return new TaskResponse.TaskLogs(TaskResponse.from(task, total), entries);
+    }
+
+    /**
+     * The task a work log entry may use: it must exist, be open and be assigned to this person.
+     * Used by WorkLogService when an entry is added or moved to another task.
+     */
+    WorkTask loggable(Long employeeId, String code) {
+        WorkTask task = taskRepository.findByCode(code.trim())
+                .orElseThrow(() -> ApiException.badRequest("Task " + code.trim().toUpperCase(Locale.ROOT) + " does not exist"));
+        if (task.getStatus() != TaskStatus.OPEN) {
+            throw ApiException.badRequest("Task " + task.getCode() + " is closed");
+        }
+        if (task.getAssignees().stream().noneMatch(e -> e.getId().equals(employeeId))) {
+            throw ApiException.badRequest("Task " + task.getCode() + " is not assigned to you");
+        }
+        return task;
+    }
+
+    private void apply(AuthUser me, WorkTask task, TaskRequest request) {
+        String code = request.getCode() == null || request.getCode().isBlank() ? null : request.getCode().trim().toUpperCase(Locale.ROOT);
+        if (code == null) {
+            code = task.getCode() != null ? task.getCode() : nextCode(task.isManualSalesTask() ? MANUAL_SALES_PREFIX : PREFIX);
+        } else if (!code.equals(task.getCode()) && taskRepository.existsByCodeIgnoreCase(code)) {
+            throw ApiException.conflict("Task ID " + code + " is already used");
+        }
+
+        Brand brand = request.getBrandId() == null ? null : brandRepository.findById(request.getBrandId())
+                .orElseThrow(() -> ApiException.badRequest("Brand not found: " + request.getBrandId()));
+        if (!me.isOwner() && !me.isGroupAdmin() && (brand == null || !brand.getId().equals(me.brandId()))) {
+            throw ApiException.forbidden("Choose your own brand for this task");
+        }
+
+        Set<Employee> assignees = new LinkedHashSet<>();
+        for (Long id : new LinkedHashSet<>(request.getAssigneeIds())) {
+            Employee e = employeeRepository.findWithBrandById(id)
+                    .orElseThrow(() -> ApiException.badRequest("Employee not found: " + id));
+            boolean alreadyOn = task.getAssignees().stream().anyMatch(a -> a.getId().equals(id));
+            if (!e.isActive() && !alreadyOn) {
+                throw ApiException.badRequest(e.getName() + "'s account is disabled");
+            }
+            if (!inScope(me, e.getBrand())) {
+                throw ApiException.forbidden("You can only assign people of your own brand");
+            }
+            // a brand's task goes to that brand's people; someone already on it stays while the brand stays the same
+            boolean sameBrand = brand == null || (e.getBrand() != null && e.getBrand().getId().equals(brand.getId()));
+            boolean brandKept = task.getBrand() != null && brand != null && task.getBrand().getId().equals(brand.getId());
+            if (!sameBrand && !(alreadyOn && brandKept)) {
+                throw ApiException.badRequest(e.getName() + " is not in " + brand.getName() + "; choose people of the task's brand");
+            }
+            assignees.add(e);
+        }
+
+        task.setCode(code);
+        task.setTitle(request.getTitle().trim());
+        task.setDescription(request.getDescription() == null || request.getDescription().isBlank() ? null : request.getDescription().trim());
+        task.setStatus(request.getStatus() != null ? request.getStatus() : TaskStatus.OPEN);
+        task.setBrand(brand);
+        task.setCustomer(customer(me, request.getCustomerId(), brand));
+        task.getAssignees().clear();
+        task.getAssignees().addAll(assignees);
+    }
+
+    /** The customer a task is for: one I may see, and of the task's brand when it has one; null = none. */
+    private Customer customer(AuthUser me, Long customerId, Brand brand) {
+        if (customerId == null) {
+            return null;
+        }
+        Customer c = customerRepository.findFull(customerId)
+                .orElseThrow(() -> ApiException.badRequest("Customer not found: " + customerId));
+        if (!inScope(me, c.getBrand())) {
+            throw ApiException.forbidden("You can only choose customers of your own brand");
+        }
+        if (brand != null && !brand.getId().equals(c.getBrand().getId())) {
+            throw ApiException.badRequest(c.getName() + " (" + c.getCode() + ") is a customer of " + c.getBrand().getName()
+                    + ", not of " + brand.getName());
+        }
+        return c;
+    }
+
+    /** TSK-0001, TSK-0002 ... (skips any taken by hand). */
+    private String nextCode(String prefix) {
+        int next = taskRepository.findTopByCodeStartingWithOrderByCodeDesc(prefix)
+                .map(t -> t.getCode().substring(prefix.length()))
+                .filter(rest -> rest.matches("\\d+"))
+                .map(rest -> Integer.parseInt(rest) + 1)
+                .orElse(1);
+        String code = String.format("%s%04d", prefix, next);
+        while (taskRepository.existsByCodeIgnoreCase(code)) {
+            code = String.format("%s%04d", prefix, ++next);
+        }
+        return code;
+    }
+
+    static boolean inScope(AuthUser me, Brand brand) {
+        return me.isOwner() || me.brandId() == null || brand == null || me.brandId().equals(brand.getId());
+    }
+
+    private Map<Long, BigDecimal> hoursPerTask() {
+        Map<Long, BigDecimal> hours = new HashMap<>();
+        for (Object[] row : logRepository.hoursPerTask()) {
+            hours.put((Long) row[0], (BigDecimal) row[1]);
+        }
+        return hours;
+    }
+}

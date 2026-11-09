@@ -1,0 +1,178 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.config;
+
+import com.companyportal.backend.entity.AccessSubject;
+import com.companyportal.backend.entity.MenuAccess;
+import com.companyportal.backend.entity.MenuItem;
+import com.companyportal.backend.repository.DesignationRepository;
+import com.companyportal.backend.repository.MenuAccessRepository;
+import com.companyportal.backend.repository.MenuItemRepository;
+import com.companyportal.backend.security.Menus;
+import com.companyportal.backend.service.MenuAccessService;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.ApplicationArguments;
+import org.springframework.boot.ApplicationRunner;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
+
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/**
+ * Keeps the menus table in step with {@link Menus} on every start (names, checkpoints, paths), and on the first
+ * start gives access as the portal worked before menu access existed: admins every menu; managers their own
+ * pages plus leave approvals and team attendance; employees their own pages. Owners always have every menu.
+ */
+@Slf4j
+@Component
+@RequiredArgsConstructor
+public class MenuBootstrap implements ApplicationRunner {
+
+    private final MenuItemRepository menuRepository;
+    private final MenuAccessRepository accessRepository;
+    private final MenuAccessService menuAccessService;
+    private final DesignationRepository designationRepository;
+    private final TransactionTemplate transactions;
+
+    @Override
+    public void run(ApplicationArguments args) {
+        transactions.executeWithoutResult(status -> {
+            boolean firstStart = accessRepository.count() == 0;
+            Set<String> added = syncMenus();
+            if (firstStart) {
+                defaults();
+            } else {
+                grantNewMenus(added);
+            }
+        });
+        menuAccessService.reload();
+    }
+
+    /** Returns the codes of menus that were not in the table before. */
+    private Set<String> syncMenus() {
+        Map<String, MenuItem> existing = menuRepository.findAll().stream()
+                .collect(Collectors.toMap(MenuItem::getCode, m -> m));
+        Set<String> added = new java.util.HashSet<>();
+        Set<String> known = Menus.ALL.stream().map(Menus.Def::code).collect(Collectors.toSet());
+        existing.values().stream().filter(m -> !known.contains(m.getCode())).forEach(menuRepository::delete);
+        menuRepository.flush();
+        int order = 0;
+        for (Menus.Def d : Menus.ALL) {
+            MenuItem m = existing.get(d.code());
+            if (m == null) {
+                m = new MenuItem();
+                added.add(d.code());
+            }
+            m.setCode(d.code());
+            m.setName(d.name());
+            m.setDescription(d.description());
+            m.setCheckpoint(d.checkpoint());
+            m.setParentCode(d.parent());
+            m.setPath(d.path());
+            m.setIcon(d.icon());
+            m.setSortOrder(order += 10);
+            menuRepository.save(m);
+        }
+        return added;
+    }
+
+    /** A menu new to this database goes to the user types listed in Menus.NEW_MENU_ROLES. */
+    private void grantNewMenus(Set<String> added) {
+        for (String code : added) {
+            Menus.ALL.stream().filter(d -> d.code().equals(code)).findFirst().ifPresent(d -> {
+                for (String role : Menus.NEW_MENU_ROLES.getOrDefault(code, List.of())) {
+                    if (grantOnce(AccessSubject.ROLE, role, String.valueOf(d.checkpoint()))) {
+                        log.info("New menu {} given to {}", d.name(), role);
+                    }
+                }
+                grantDesignations(d);
+                takeOver(d);
+                if (Menus.WAS_FOR_EVERYONE.contains(code)) {
+                    grantEveryone(d);
+                }
+            });
+        }
+    }
+
+    /** Every user type and person with ticks of their own; "*" already covers it, and a designation only adds to a user type's. */
+    private void grantEveryone(Menus.Def d) {
+        Set<String> given = new java.util.HashSet<>();
+        for (MenuAccess a : accessRepository.findAll()) {
+            boolean all = MenuAccess.ALL.equals(a.getCheckpoint());
+            if (!all && a.getSubjectType() != AccessSubject.DESIGNATION && given.add(a.getSubjectType() + ":" + a.getSubjectKey())) {
+                grantOnce(a.getSubjectType(), a.getSubjectKey(), String.valueOf(d.checkpoint()));
+            }
+        }
+        log.info("Menu {} given to the {} user types and people who have ticks", d.name(), given.size());
+    }
+
+    /**
+     * A menu moved here from older checkpoints (Menus.TAKES_OVER): everyone who had one of them gets it; the rows
+     * of checkpoints whose menu is gone are removed (a parent that still exists keeps its rows).
+     */
+    private void takeOver(Menus.Def d) {
+        List<String> old = Menus.TAKES_OVER.getOrDefault(d.code(), List.of());
+        if (old.isEmpty()) {
+            return;
+        }
+        String checkpoint = String.valueOf(d.checkpoint());
+        Set<Integer> live = Menus.ALL.stream().map(Menus.Def::checkpoint).collect(Collectors.toSet());
+        List<MenuAccess> rows = accessRepository.findAll();
+        Set<String> given = new java.util.HashSet<>();
+        for (MenuAccess a : rows) {
+            if (!old.contains(a.getCheckpoint())) {
+                continue;
+            }
+            String subject = a.getSubjectType() + ":" + a.getSubjectKey();
+            if (given.add(subject) && grantOnce(a.getSubjectType(), a.getSubjectKey(), checkpoint)) {
+                log.info("Menu {} given to {} {} (had checkpoint {})", d.name(), a.getSubjectType(), a.getSubjectKey(), a.getCheckpoint());
+            }
+            if (!live.contains(Integer.valueOf(a.getCheckpoint()))) {
+                accessRepository.delete(a);
+            }
+        }
+    }
+
+    /** Gives the menu to the designations listed in Menus.NEW_MENU_DESIGNATIONS that exist here (key = designation id). */
+    private void grantDesignations(Menus.Def d) {
+        for (String levelCode : Menus.NEW_MENU_DESIGNATIONS.getOrDefault(d.code(), List.of())) {
+            designationRepository.findAll().stream().filter(x -> levelCode.equals(x.getLevelCode())).findFirst().ifPresent(x -> {
+                if (grantOnce(AccessSubject.DESIGNATION, String.valueOf(x.getId()), String.valueOf(d.checkpoint()))) {
+                    log.info("New menu {} given to {}", d.name(), x.getName());
+                }
+            });
+        }
+    }
+
+    private void defaults() {
+        grant("OWNER", List.of(MenuAccess.ALL));
+        grant("ADMIN", List.of(MenuAccess.ALL));
+        grant("MANAGER", List.of("400", "1001", "1002", "2001", "2002", "3001", "6001", "6002", "6004", "6005", "6006", "6007", "8000"));
+        grant("EMPLOYEE", List.of("400", "1001", "2001", "3001", "6001", "8000"));
+        Menus.ALL.forEach(this::grantDesignations);
+        log.info("Created the default menu access for each user type");
+    }
+
+    private void grant(String role, List<String> checkpoints) {
+        checkpoints.forEach(c -> grantOnce(AccessSubject.ROLE, role, c));
+    }
+
+    /**
+     * Saves the grant unless it is already there; false when it was. A menu can look new while its grants are still
+     * stored (e.g. an older build that did not know the menu ran on this database and took the menu out, but not the
+     * grants), so a grant is never saved twice.
+     */
+    private boolean grantOnce(AccessSubject type, String key, String checkpoint) {
+        if (accessRepository.existsBySubjectTypeAndSubjectKeyAndCheckpoint(type, key, checkpoint)) {
+            return false;
+        }
+        accessRepository.saveAndFlush(MenuAccess.of(type, key, checkpoint));
+        return true;
+    }
+}

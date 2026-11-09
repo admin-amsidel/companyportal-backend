@@ -1,0 +1,234 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.controller;
+
+import com.companyportal.backend.dto.*;
+import com.companyportal.backend.entity.LeaveStatus;
+import com.companyportal.backend.entity.LeaveType;
+import com.companyportal.backend.security.AuthUser;
+import com.companyportal.backend.security.Checkpoint;
+import com.companyportal.backend.security.Menus;
+import com.companyportal.backend.service.LeavePlanService;
+import com.companyportal.backend.service.LeaveService;
+import com.companyportal.backend.service.LeaveSettingsService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
+import java.util.List;
+
+/**
+ * Leave tracking. Each API needs its menu (@Checkpoint): /me = My leave; changing types and holidays = Leave
+ * settings; approvals, grants and others' balances = Approvals, with person-by-person checks in LeaveService.
+ */
+@RestController
+@RequestMapping("/api/leave")
+@RequiredArgsConstructor
+public class LeaveController {
+
+    private final LeaveService leaveService;
+    private final LeaveSettingsService settingsService;
+    private final LeavePlanService planService;
+
+    // ---- settings ----
+
+    @Checkpoint({Menus.LEAVE_MY, Menus.LEAVE_APPROVALS, Menus.LEAVE_SETTINGS})
+    @GetMapping("/types")
+    public List<LeaveType> types() {
+        return settingsService.types();
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @PostMapping("/types")
+    @ResponseStatus(HttpStatus.CREATED)
+    public LeaveType createType(@Valid @RequestBody LeaveTypeRequest request) {
+        return settingsService.createType(request);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @PutMapping("/types/{id}")
+    public LeaveType updateType(@PathVariable Long id, @Valid @RequestBody LeaveTypeRequest request) {
+        return settingsService.updateType(id, request);
+    }
+
+    @Checkpoint({Menus.LEAVE_MY, Menus.LEAVE_APPROVALS, Menus.LEAVE_SETTINGS})
+    @GetMapping("/restricted-holidays")
+    public List<RestrictedHolidayResponse> holidays(@AuthenticationPrincipal AuthUser me, @RequestParam(required = false) Integer year,
+                                                  @RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to,
+                                                  @RequestParam(required = false) Long brandId) {
+        int y = year != null ? year : LocalDate.now().getYear();
+        return settingsService.holidays(me, from != null ? from : LocalDate.of(y, 1, 1), to != null ? to : LocalDate.of(y, 12, 31), brandId);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @PostMapping("/restricted-holidays")
+    @ResponseStatus(HttpStatus.CREATED)
+    public RestrictedHolidayResponse addHoliday(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody RestrictedHolidayRequest request) {
+        return settingsService.addHoliday(me, request);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @DeleteMapping("/restricted-holidays/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeHoliday(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        settingsService.removeHoliday(me, id);
+    }
+
+    // ---- leave plans ----
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @GetMapping("/plans")
+    public LeavePlanDtos.Overview plans(@AuthenticationPrincipal AuthUser me) {
+        return planService.overview(me);
+    }
+
+    /** Plans about to end with no next one, and brands with no plan: for the alert in the portal. */
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @GetMapping("/plans/alerts")
+    public List<LeavePlanDtos.Alert> planAlerts(@AuthenticationPrincipal AuthUser me) {
+        return planService.alerts(me);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @PostMapping("/plans")
+    @ResponseStatus(HttpStatus.CREATED)
+    public LeavePlanDtos.PlanView addPlan(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody LeavePlanDtos.PlanBody body) {
+        return planService.create(me, body);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @PutMapping("/plans/{id}")
+    public LeavePlanDtos.PlanView updatePlan(@AuthenticationPrincipal AuthUser me, @PathVariable Long id, @Valid @RequestBody LeavePlanDtos.PlanBody body) {
+        return planService.update(me, id, body);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @DeleteMapping("/plans/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removePlan(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        planService.delete(me, id);
+    }
+
+    // ---- office holidays (closed for everyone; nobody applies) ----
+
+    @Checkpoint({Menus.LEAVE_MY, Menus.LEAVE_APPROVALS, Menus.LEAVE_SETTINGS, Menus.WORKLOG_MY})
+    @GetMapping("/office-holidays")
+    public List<OfficeHolidayResponse> officeHolidays(@AuthenticationPrincipal AuthUser me, @RequestParam(required = false) Integer year,
+                                                  @RequestParam(required = false) LocalDate from, @RequestParam(required = false) LocalDate to,
+                                                  @RequestParam(required = false) Long brandId) {
+        int y = year != null ? year : LocalDate.now().getYear();
+        return settingsService.officeHolidays(me, from != null ? from : LocalDate.of(y, 1, 1), to != null ? to : LocalDate.of(y, 12, 31), brandId);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @PostMapping("/office-holidays")
+    @ResponseStatus(HttpStatus.CREATED)
+    public OfficeHolidayResponse addOfficeHoliday(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody RestrictedHolidayRequest request) {
+        return settingsService.addOfficeHoliday(me, request);
+    }
+
+    @Checkpoint({Menus.LEAVE_SETTINGS})
+    @DeleteMapping("/office-holidays/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void removeOfficeHoliday(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        settingsService.removeOfficeHoliday(me, id);
+    }
+
+    // ---- my leave ----
+
+    @Checkpoint({Menus.LEAVE_MY})
+    @GetMapping("/me/balances")
+    public List<LeaveBalance> myBalances(@AuthenticationPrincipal AuthUser me) {
+        return leaveService.myBalances(me);
+    }
+
+    /** The plan in force today for my brand, today's date and my balances in it. */
+    @Checkpoint({Menus.LEAVE_MY})
+    @GetMapping("/me/current")
+    public LeavePlanDtos.MyCurrent myCurrent(@AuthenticationPrincipal AuthUser me) {
+        return leaveService.myCurrent(me);
+    }
+
+    @Checkpoint({Menus.LEAVE_MY})
+    @GetMapping("/me/requests")
+    public List<LeaveRequestResponse> myRequests(@AuthenticationPrincipal AuthUser me) {
+        return leaveService.myRequests(me);
+    }
+
+    @Checkpoint({Menus.LEAVE_MY})
+    @PostMapping("/me/requests")
+    @ResponseStatus(HttpStatus.CREATED)
+    public LeaveRequestResponse apply(@AuthenticationPrincipal AuthUser me,
+                                      @Valid @RequestBody LeaveApplyRequest request) {
+        return leaveService.apply(me, request);
+    }
+
+    @Checkpoint({Menus.LEAVE_MY})
+    @PostMapping("/me/requests/{id}/cancel")
+    public LeaveRequestResponse cancel(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        return leaveService.cancel(me, id);
+    }
+
+    @Checkpoint({Menus.LEAVE_MY})
+    @GetMapping("/me/grants")
+    public List<LeaveGrantResponse> myGrants(@AuthenticationPrincipal AuthUser me) {
+        return leaveService.myGrants(me);
+    }
+
+    // ---- approvers ----
+
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @GetMapping("/requests")
+    public List<LeaveRequestResponse> requests(@AuthenticationPrincipal AuthUser me,
+                                               @RequestParam(required = false) LeaveStatus status,
+                                               @RequestParam(required = false) Long brandId,
+                                               @RequestParam(required = false) String brandCode,
+                                               @RequestParam(required = false) LocalDate from,
+                                               @RequestParam(required = false) LocalDate to) {
+        return leaveService.requestsToDecide(me, status, brandId, brandCode, from, to);
+    }
+
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @PostMapping("/requests/{id}/approve")
+    public LeaveRequestResponse approve(@AuthenticationPrincipal AuthUser me, @PathVariable Long id,
+                                        @Valid @RequestBody(required = false) LeaveDecisionRequest request) {
+        return leaveService.decide(me, id, true, request == null ? null : request.getNote());
+    }
+
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @PostMapping("/requests/{id}/reject")
+    public LeaveRequestResponse reject(@AuthenticationPrincipal AuthUser me, @PathVariable Long id,
+                                       @Valid @RequestBody LeaveDecisionRequest request) {
+        return leaveService.decide(me, id, false, request.getNote());
+    }
+
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @GetMapping("/team")
+    public List<TeamMember> team(@AuthenticationPrincipal AuthUser me) {
+        return leaveService.team(me);
+    }
+
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @GetMapping("/balances")
+    public List<LeaveBalance> balances(@AuthenticationPrincipal AuthUser me, @RequestParam Long employeeId) {
+        return leaveService.balancesOf(me, employeeId);
+    }
+
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @GetMapping("/grants")
+    public List<LeaveGrantResponse> grants(@AuthenticationPrincipal AuthUser me, @RequestParam Long employeeId) {
+        return leaveService.grantsOf(me, employeeId);
+    }
+
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @PostMapping("/grants")
+    @ResponseStatus(HttpStatus.CREATED)
+    public LeaveGrantResponse grant(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody LeaveGrantRequest request) {
+        return leaveService.grant(me, request);
+    }
+}

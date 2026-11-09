@@ -1,0 +1,180 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.controller;
+
+import com.companyportal.backend.service.ExportService;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ContentDisposition;
+import com.companyportal.backend.dto.AttendanceDay;
+import com.companyportal.backend.dto.AttendanceDaySummary;
+import com.companyportal.backend.dto.AttendanceRecord;
+import com.companyportal.backend.dto.AttendanceShortfall;
+import com.companyportal.backend.dto.AttendanceToday;
+import com.companyportal.backend.dto.CheckInRequest;
+import com.companyportal.backend.dto.CheckOutRequest;
+import com.companyportal.backend.dto.TeamMember;
+import com.companyportal.backend.exception.ApiException;
+import com.companyportal.backend.security.AuthUser;
+import com.companyportal.backend.security.Checkpoint;
+import com.companyportal.backend.security.Menus;
+import com.companyportal.backend.service.AttendanceService;
+import com.companyportal.backend.service.WorkLogService;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.CacheControl;
+import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.util.StringUtils;
+import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
+
+import java.io.IOException;
+import java.time.Duration;
+import java.time.LocalDate;
+import java.util.List;
+
+/** Attendance (check-in / check-out). Every signed-in person; the service limits whose days they see. */
+@RestController
+@RequestMapping("/api/attendance")
+@RequiredArgsConstructor
+public class AttendanceController {
+
+    private final AttendanceService attendanceService;
+    private final ExportService exportService;
+    private final WorkLogService workLogService;
+
+    @Checkpoint({Menus.ATT_CHECKIN})
+    @GetMapping("/today")
+    public AttendanceToday today(@AuthenticationPrincipal AuthUser me) {
+        return attendanceService.today(me);
+    }
+
+    /** Multipart: "photo" (the live camera picture) plus the CheckInRequest fields. */
+    @Checkpoint({Menus.ATT_CHECKIN})
+    @PostMapping(path = "/check-in", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @ResponseStatus(HttpStatus.CREATED)
+    public AttendanceRecord checkIn(@AuthenticationPrincipal AuthUser me, @Valid @ModelAttribute CheckInRequest request,
+                                    @RequestPart(name = "photo", required = false) MultipartFile photo,
+                                    HttpServletRequest http) {
+        return attendanceService.checkIn(me, request, bytes(photo), clientIp(http));
+    }
+
+    /** Closes the open entry: "End work today", or the current field visit. */
+    @Checkpoint({Menus.ATT_CHECKIN})
+    @PostMapping("/check-out")
+    public AttendanceRecord checkOut(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody CheckOutRequest request,
+                                     HttpServletRequest http) {
+        return attendanceService.checkOut(me, request, clientIp(http));
+    }
+
+    /** Checked-in time against the work hour rule: mine, or employeeId's when they are below me. */
+    @Checkpoint({Menus.ATT_CHECKIN, Menus.ATT_TEAM})
+    @GetMapping("/shortfall")
+    public AttendanceShortfall shortfall(@AuthenticationPrincipal AuthUser me, @RequestParam(required = false) Long employeeId,
+                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return workLogService.shortfall(me, employeeId, from, to);
+    }
+
+    /** My days, newest first, with their entries (default: the last 30 days). */
+    @Checkpoint({Menus.ATT_CHECKIN})
+    @GetMapping("/me")
+    public List<AttendanceDaySummary> mine(@AuthenticationPrincipal AuthUser me,
+                                       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                       @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return attendanceService.days(me, null, from, to);
+    }
+
+    /** People whose attendance I may look at. */
+    @Checkpoint({Menus.ATT_TEAM})
+    @GetMapping("/team")
+    public List<TeamMember> team(@AuthenticationPrincipal AuthUser me) {
+        return attendanceService.team(me);
+    }
+
+    /** My team on one day (default: today). */
+    @Checkpoint({Menus.ATT_TEAM})
+    @GetMapping("/day")
+    public AttendanceDay day(@AuthenticationPrincipal AuthUser me,
+                             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date) {
+        return attendanceService.day(me, date);
+    }
+
+    /** One person's days, newest first, with their entries. */
+    @Checkpoint({Menus.ATT_TEAM})
+    @GetMapping("/employees/{employeeId}")
+    public List<AttendanceDaySummary> employeeDays(@AuthenticationPrincipal AuthUser me, @PathVariable Long employeeId,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                               @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return attendanceService.days(me, employeeId, from, to);
+    }
+
+    /**
+     * Excel file of from..to (up to a year): mine, one person's (employeeId) or mine and my team's (all=true).
+     * Summary, every day with its status, and each check-in / check-out.
+     */
+    @Checkpoint({Menus.ATT_CHECKIN, Menus.ATT_TEAM})
+    @com.companyportal.backend.security.ExportCheck
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> export(@AuthenticationPrincipal AuthUser me,
+                                         @RequestParam(required = false) Long employeeId,
+                                         @RequestParam(defaultValue = "false") boolean all,
+                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return excel(exportService.attendance(me, employeeId, all, from, to));
+    }
+
+    /** An Excel download, not cached. */
+    static ResponseEntity<byte[]> excel(ExportService.Export file) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, ContentDisposition.attachment().filename(file.fileName()).build().toString())
+                .cacheControl(CacheControl.noStore())
+                .body(file.bytes());
+    }
+
+    /** Owners only: removes one attendance entry (a day or one field visit of it) and its photo. */
+    @Checkpoint({Menus.ATT_TEAM})
+    @DeleteMapping("/{id}")
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        attendanceService.delete(me, id);
+        return ResponseEntity.noContent().build();
+    }
+
+    @Checkpoint({Menus.ATT_CHECKIN, Menus.ATT_TEAM})
+    @GetMapping("/{id}/photo")
+    public ResponseEntity<byte[]> photo(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        return ResponseEntity.ok()
+                .contentType(MediaType.IMAGE_JPEG)
+                .cacheControl(CacheControl.maxAge(Duration.ofDays(1)).cachePrivate())
+                .body(attendanceService.photo(me, id));
+    }
+
+    /** The photo's bytes; null when none was sent (only a field visit needs one). */
+    private static byte[] bytes(MultipartFile photo) {
+        if (photo == null || photo.isEmpty()) {
+            return null;
+        }
+        try {
+            return photo.getBytes();
+        } catch (IOException e) {
+            throw ApiException.badRequest("The photo could not be read; please take it again");
+        }
+    }
+
+    /**
+     * The caller's address: the first X-Forwarded-For entry when behind a proxy (Render sets it), else the
+     * connection's address. Kept as a hint for reviewers, not as proof of location.
+     */
+    static String clientIp(HttpServletRequest request) {
+        String forwarded = request.getHeader("X-Forwarded-For");
+        String ip = StringUtils.hasText(forwarded) ? forwarded.split(",")[0].strip() : request.getRemoteAddr();
+        return ip == null ? null : ip.length() > 64 ? ip.substring(0, 64) : ip;
+    }
+}

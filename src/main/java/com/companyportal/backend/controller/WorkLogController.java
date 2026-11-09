@@ -1,0 +1,117 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.controller;
+
+import com.companyportal.backend.service.ExportService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import com.companyportal.backend.dto.*;
+import com.companyportal.backend.security.AuthUser;
+import com.companyportal.backend.security.Checkpoint;
+import com.companyportal.backend.security.Menus;
+import com.companyportal.backend.service.WorkLogService;
+import com.companyportal.backend.service.WorkRuleService;
+import jakarta.validation.Valid;
+import lombok.RequiredArgsConstructor;
+import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
+
+import java.time.LocalDate;
+import java.util.List;
+
+/**
+ * Work log. With My work log, people log their own hours; reading someone else's log and setting their hours is
+ * checked person by person in WorkLogService; each brand's rules need the Work hour rules menu.
+ */
+@RestController
+@RequestMapping("/api/worklog")
+@RequiredArgsConstructor
+public class WorkLogController {
+
+    private final WorkLogService workLogService;
+    private final WorkRuleService ruleService;
+    private final ExportService exportService;
+
+    /** Calendar data for me, or for employeeId. */
+    @Checkpoint({Menus.WORKLOG_MY})
+    @GetMapping
+    public WorkLogMonth month(@AuthenticationPrincipal AuthUser me,
+                              @RequestParam(required = false) Long employeeId,
+                              @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                              @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return workLogService.month(me, employeeId, from, to);
+    }
+
+    /** Excel file of from..to (up to a year): mine, one person's (employeeId) or mine and my team's (all=true). */
+    @Checkpoint({Menus.WORKLOG_MY})
+    @com.companyportal.backend.security.ExportCheck
+    @GetMapping("/export")
+    public ResponseEntity<byte[]> export(@AuthenticationPrincipal AuthUser me,
+                                         @RequestParam(required = false) Long employeeId,
+                                         @RequestParam(defaultValue = "false") boolean all,
+                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate from,
+                                         @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate to) {
+        return AttendanceController.excel(exportService.workLog(me, employeeId, all, from, to));
+    }
+
+    @Checkpoint({Menus.WORKLOG_MY})
+    @GetMapping("/team")
+    public List<TeamMember> team(@AuthenticationPrincipal AuthUser me) {
+        return workLogService.team(me);
+    }
+
+    @Checkpoint({Menus.WORKLOG_MY})
+    @PostMapping("/entries")
+    @ResponseStatus(HttpStatus.CREATED)
+    public WorkLogEntry add(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody WorkLogRequest request) {
+        return workLogService.add(me, request);
+    }
+
+    @Checkpoint({Menus.WORKLOG_MY})
+    @PutMapping("/entries/{id}")
+    public WorkLogEntry update(@AuthenticationPrincipal AuthUser me, @PathVariable Long id,
+                               @Valid @RequestBody WorkLogRequest request) {
+        return workLogService.update(me, id, request);
+    }
+
+    @Checkpoint({Menus.WORKLOG_MY})
+    @DeleteMapping("/entries/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        workLogService.delete(me, id);
+    }
+
+    @Checkpoint({Menus.WORK_RULES})
+    @GetMapping("/rules")
+    public List<WorkRuleService.Row> rules(@AuthenticationPrincipal AuthUser me) {
+        return ruleService.rows(me);
+    }
+
+    /** One brand's default, or its hours for one designation. */
+    @Checkpoint({Menus.WORK_RULES})
+    @PutMapping("/rules")
+    public List<WorkRuleService.Row> saveRule(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody WorkHourRuleRequest rule) {
+        return ruleService.save(me, rule);
+    }
+
+    @Checkpoint({Menus.WORK_RULES})
+    @DeleteMapping("/rules")
+    public List<WorkRuleService.Row> removeRule(@AuthenticationPrincipal AuthUser me, @RequestParam(required = false) Long brandId,
+                                                @RequestParam(required = false) Long designationId) {
+        return ruleService.remove(me, brandId, designationId);
+    }
+
+    @Checkpoint({Menus.WORKLOG_MY})
+    @PutMapping("/targets/{employeeId}")
+    public WorkTarget setTarget(@AuthenticationPrincipal AuthUser me, @PathVariable Long employeeId,
+                                @Valid @RequestBody WorkTargetRequest request) {
+        return workLogService.setTarget(me, employeeId, request);
+    }
+}

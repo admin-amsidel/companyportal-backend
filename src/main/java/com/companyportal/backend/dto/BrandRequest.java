@@ -1,0 +1,68 @@
+/*
+ * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
+ * Designed and developed by AMSIDEL Technologies.
+ */
+package com.companyportal.backend.dto;
+
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
+import jakarta.validation.constraints.Size;
+import lombok.Data;
+
+import java.time.LocalDate;
+
+@Data
+public class BrandRequest {
+
+    @NotBlank
+    @Pattern(regexp = "^[A-Za-z0-9]{2,10}$", message = "Code must be 2-10 letters or numbers, e.g. AD")
+    private String code;
+
+    @NotBlank
+    @Size(max = 150)
+    private String name;
+
+    private Boolean active;
+
+    @Size(max = 500)
+    private String address;
+
+    private LocalDate launchedDate;
+
+    /** Comma separated names. */
+    @Size(max = 500)
+    private String owners;
+
+    @Pattern(regexp = "|[0-9]{2}[A-Za-z]{5}[0-9]{4}[A-Za-z][0-9A-Za-z][Zz][0-9A-Za-z]",
+            message = "GSTIN is 15 characters, e.g. 32ABCDE1234F1Z5")
+    private String gstNumber;
+
+    @Size(max = 60)
+    private String category;
+
+    @Pattern(regexp = "^$|^\\+?[0-9 ()-]{7,20}$", message ="Enter a valid phone number (7-20 digits, may start with +)")
+    private String contactNumber;
+
+    @jakarta.validation.constraints.Email(message = "Enter a valid email address")
+    @Size(max = 150)
+    private String email;
+
+    /** For invoices. */
+    @Pattern(regexp = "|[0-9]{6,20}", message = "Bank account number: 6 to 20 digits")
+    private String bankAccount;
+
+    @Pattern(regexp = "|[A-Za-z]{4}0[A-Za-z0-9]{6}", message = "IFSC is 11 characters: 4 letters, 0, then 6 letters or digits, e.g. HDFC0001234")
+    private String ifsc;
+
+    @Pattern(regexp = "|[A-Za-z0-9._-]{2,256}@[A-Za-z]{2,64}", message = "UPI ID looks like name@bank, e.g. company@okhdfcbank")
+    private String upi;
+
+    /** The currency its documents show (symbol only); empty = keep (a new brand: rupees). */
+    private com.companyportal.backend.entity.CurrencyCode currency;
+
+    /** The colours its people see the portal in; missing = keep, empty = the standard look. */
+    private String colorPalette;
+
+    /** The time zone its people work in, such as Asia/Dubai; empty = keep (a new brand: the company's default). */
+    private String timeZone;
+}
