@@ -16,8 +16,11 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
-import org.springframework.mail.SimpleMailMessage;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeMessage;
+import org.springframework.mail.MailException;
 import org.springframework.mail.javamail.JavaMailSender;
+import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
 
@@ -26,7 +29,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
-import java.time.format.DateTimeFormatter;
+import java.io.UnsupportedEncodingException;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -38,23 +41,25 @@ import java.util.concurrent.Executors;
 /**
  * Call-back and demo requests from the website's support chat. Open to anyone, so: robots that fill the hidden field
  * get a polite answer and nothing is kept; a visitor may leave a few an hour and the whole site a few dozen. Each one
- * is saved first, then mailed to the sales team in the background (the visitor never waits for the mail server).
+ * is saved first, then mailed in the background (the visitor never waits for the mail server): an alert to the sales
+ * team, and a confirmation to the visitor, both in the portal's mail card (EnquiryMails).
  */
 @Slf4j
 @Service
 public class EnquiryService {
 
     private static final Duration WINDOW = Duration.ofHours(1);
-    private static final DateTimeFormatter DAY = DateTimeFormatter.ofPattern("EEEE, d MMMM yyyy");
 
     private final SalesEnquiryRepository repository;
     private final MailService mailService;
     private final ObjectProvider<JavaMailSender> mailSender;
+    private final EnquiryMails mails;
     private final Clock clock;
     private final ZoneId zone;
     private final String[] notifyTo;
     private final int perVisitor;
     private final int perSite;
+    private final boolean confirmVisitor;
 
     /** Guarded by bySite. */
     private final Map<String, Deque<Instant>> byVisitor = new HashMap<>();
@@ -66,20 +71,23 @@ public class EnquiryService {
     });
 
     public EnquiryService(SalesEnquiryRepository repository, MailService mailService,
-                          ObjectProvider<JavaMailSender> mailSender, Clock clock,
+                          ObjectProvider<JavaMailSender> mailSender, EnquiryMails mails, Clock clock,
                           @Value("${app.leave.zone:Asia/Kolkata}") String zone,
                           @Value("${app.enquiries.notify-to:}") String notifyTo,
                           @Value("${app.enquiries.per-visitor-per-hour:5}") int perVisitor,
-                          @Value("${app.enquiries.per-hour:60}") int perSite) {
+                          @Value("${app.enquiries.per-hour:60}") int perSite,
+                          @Value("${app.enquiries.confirm-visitor:true}") boolean confirmVisitor) {
         this.repository = repository;
         this.mailService = mailService;
         this.mailSender = mailSender;
+        this.mails = mails;
         this.clock = clock;
         this.zone = ZoneId.of(zone);
         this.notifyTo = Arrays.stream(notifyTo.split("[,;]")).map(String::trim).filter(StringUtils::hasText)
                 .toArray(String[]::new);
         this.perVisitor = perVisitor;
         this.perSite = perSite;
+        this.confirmVisitor = confirmVisitor;
     }
 
     public EnquiryReceived receive(EnquiryRequest req, String visitor) {
@@ -104,10 +112,11 @@ public class EnquiryService {
         e.setCreatedAt(clock.instant());
         SalesEnquiry saved = repository.save(e);
 
-        if (notifyTo.length > 0) {
-            mailer.execute(() -> notifySales(saved));
-        } else {
-            log.info("Enquiry {} ({}) saved; app.enquiries.notify-to is not set, so no mail was sent",
+        if (notifyTo.length > 0 || confirmVisitor) {
+            mailer.execute(() -> sendMails(saved));
+        }
+        if (notifyTo.length == 0) {
+            log.info("Enquiry {} ({}) saved; app.enquiries.notify-to is not set, so the sales team gets no mail",
                     saved.getId(), saved.getKind());
         }
         return new EnquiryReceived(saved.getId(), saved.getKind());
@@ -145,40 +154,42 @@ public class EnquiryService {
                 "We have already received your details. Please try again later, or call us.");
     }
 
-    private void notifySales(SalesEnquiry e) {
-        try {
-            MailSetup setup = mailService.setup();
-            JavaMailSender sender = mailSender.getIfAvailable();
-            if (!setup.ready() || sender == null) {
-                log.warn("Enquiry {} saved but mail is not set up, so the sales team was not told", e.getId());
-                return;
-            }
-            boolean demo = e.getKind() == EnquiryKind.DEMO;
-            SimpleMailMessage m = new SimpleMailMessage();
-            m.setFrom(setup.from());
-            m.setTo(notifyTo);
-            m.setReplyTo(e.getEmail());
-            m.setSubject((demo ? "Demo request: " : "Call-back request: ") + e.getName()
-                    + (e.getCompany() != null ? " (" + e.getCompany() + ")" : ""));
-            StringBuilder b = new StringBuilder();
-            b.append(demo ? "A visitor asked for a demo" : "A visitor asked to be contacted")
-                    .append(" through the website chat.\n\n");
-            b.append("Name:    ").append(e.getName()).append('\n');
-            b.append("Phone:   ").append(e.getPhone()).append('\n');
-            b.append("Email:   ").append(e.getEmail()).append('\n');
-            if (e.getCompany() != null) b.append("Company: ").append(e.getCompany()).append('\n');
-            if (demo) {
-                b.append("Demo:    ").append(DAY.format(e.getDemoDate())).append(" at ").append(e.getDemoTime())
-                        .append(" (").append(zone.getId()).append(")\n");
-            }
-            if (e.getMessage() != null) b.append("\nInterested in: ").append(e.getMessage()).append('\n');
-            b.append("\nReply to this mail to answer them. Enquiry no. ").append(e.getId()).append('.');
-            m.setText(b.toString());
-            sender.send(m);
-            repository.markNotified(e.getId());
-        } catch (RuntimeException ex) {
-            log.warn("Enquiry {} saved but the mail to the sales team failed: {}", e.getId(), ex.getMessage());
+    /** In the background: the sales team's alert (then marked as mailed), and the visitor's confirmation. */
+    private void sendMails(SalesEnquiry e) {
+        MailSetup setup = mailService.setup();
+        JavaMailSender sender = mailSender.getIfAvailable();
+        if (!setup.ready() || sender == null) {
+            log.warn("Enquiry {} saved but mail is not set up, so no mail was sent", e.getId());
+            return;
         }
+        if (notifyTo.length > 0) {
+            try {
+                send(sender, setup, mails.toSales(e), notifyTo, e.getEmail());
+                repository.markNotified(e.getId());
+            } catch (MailException | MessagingException | UnsupportedEncodingException ex) {
+                log.warn("Enquiry {} saved but the mail to the sales team failed: {}", e.getId(), ex.getMessage());
+            }
+        }
+        if (confirmVisitor) {
+            try {
+                // replies go to the sales team, not to the no-reply sender
+                send(sender, setup, mails.toVisitor(e), new String[]{e.getEmail()}, notifyTo.length > 0 ? notifyTo[0] : null);
+            } catch (MailException | MessagingException | UnsupportedEncodingException ex) {
+                log.warn("Enquiry {}: the confirmation to the visitor failed: {}", e.getId(), ex.getMessage());
+            }
+        }
+    }
+
+    private static void send(JavaMailSender sender, MailSetup setup, EnquiryMails.Mail mail, String[] to, String replyTo)
+            throws MessagingException, UnsupportedEncodingException {
+        MimeMessage message = sender.createMimeMessage();
+        MimeMessageHelper m = new MimeMessageHelper(message, true, "UTF-8");
+        m.setFrom(setup.from(), setup.fromName());
+        m.setTo(to);
+        if (StringUtils.hasText(replyTo)) m.setReplyTo(replyTo);
+        m.setSubject(mail.subject());
+        m.setText(mail.plain(), mail.html());
+        sender.send(message);
     }
 
     private static String blankToNull(String s) {

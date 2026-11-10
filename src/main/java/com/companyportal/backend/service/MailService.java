@@ -376,20 +376,35 @@ public class MailService {
 
     /** Light blue: a pale blue page, a white card with a blue band on top, dark grey text. */
     private static String html(String greeting, String text, String signature, List<Picture> pictures, MailLimitsService.MailLook look) {
+        return frame(look.header(), """
+                <p style="margin:0 0 16px">Dear %s,</p>
+                <div>%s</div>
+                <div style="margin:28px 0 0;padding-top:14px;border-top:1px solid #e3ecf7;color:%s">%s</div>
+                """.formatted(escape(greeting), rich(place(escape(text), pictures, MailService::pictureHtml, "")),
+                MUTED, rich(escape(signature))), look.footer());
+    }
+
+    /**
+     * The portal's mail card (light blue: a pale page, a white card with a blue band on top, a grey footer), around
+     * {@code bodyHtml}, which must be escaped already; the header and footer lines are escaped here. Staff mail,
+     * customer mail and the website enquiry mails all look like this.
+     */
+    public static String frame(String header, String bodyHtml, String footer) {
         return """
                 <!doctype html><html><body style="margin:0;padding:24px 12px;background:#eef4fb;font-family:Arial,Helvetica,sans-serif;color:%s">
                 <table role="presentation" width="100%%" style="max-width:640px;margin:0 auto;background:#ffffff;border:1px solid #d6e4f5;border-radius:10px;border-collapse:separate;overflow:hidden">
                 <tr><td style="background:#e3eefa;border-bottom:3px solid #2f74c0;color:%s;padding:16px 24px;font-size:14px;font-weight:700;letter-spacing:4px">%s</td></tr>
                 <tr><td style="padding:24px;font-size:15px;line-height:1.6;color:%s">
-                <p style="margin:0 0 16px">Dear %s,</p>
-                <div>%s</div>
-                <div style="margin:28px 0 0;padding-top:14px;border-top:1px solid #e3ecf7;color:%s">%s</div>
-                </td></tr>
+                %s</td></tr>
                 <tr><td style="padding:12px 24px;background:#f5f9fe;border-top:1px solid #dbe7f5;font-size:12px;color:%s">%s</td></tr>
                 </table></body></html>
-                """.formatted(INK, BLUE, escape(look.header()), INK, escape(greeting), rich(place(escape(text), pictures, MailService::pictureHtml, "")),
-                MUTED, rich(escape(signature)), MUTED, escape(look.footer()));
+                """.formatted(INK, BLUE, escape(header), INK, bodyHtml, MUTED, escape(footer));
     }
+
+    /** The card's colours, for content placed inside {@link #frame}. */
+    public static final String CARD_BLUE = BLUE;
+    public static final String CARD_INK = INK;
+    public static final String CARD_MUTED = MUTED;
 
     private static String escape(String s) {
         return HtmlUtils.htmlEscape(s.replace("\r\n", "\n"));
