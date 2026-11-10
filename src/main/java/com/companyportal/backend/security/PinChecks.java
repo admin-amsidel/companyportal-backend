@@ -33,8 +33,10 @@ public class PinChecks {
                      @Value("${app.login.max-concurrent-checks:0}") int maxConcurrent,
                      @Value("${app.login.check-wait:PT15S}") Duration maxWait) {
         this.passwordEncoder = passwordEncoder;
-        // 0 = follow the machine, so more CPU on the server needs no change here; at least 2, as a small cloud server reports 1
-        this.turns = new Semaphore(maxConcurrent > 0 ? maxConcurrent : Math.max(2, Runtime.getRuntime().availableProcessors()), true);
+        // 0 = follow the machine, so more CPU on the server needs no change here. A server with part of one CPU (0.1-1)
+        // reports 1: two checks at once there each take twice as long, so the first person waits longer and nobody
+        // is faster. The rest wait in order (fair), each answered as soon as its own check is done.
+        this.turns = new Semaphore(maxConcurrent > 0 ? maxConcurrent : Math.max(1, Runtime.getRuntime().availableProcessors()), true);
         this.maxWait = maxWait;
     }
 

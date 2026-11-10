@@ -30,6 +30,51 @@ Database settings come from environment variables (or `secrets.properties` next 
 Careful: `spring-boot:run` always uses the database in application.properties, even with
 `-Dspring-boot.run.profiles=test` (Spring Boot 4 ignores the old `useTestClasspath` option, so the test settings are not loaded).
 
+## Schema changes (Flyway)
+
+The database schema is made and changed by [Flyway](https://documentation.red-gate.com/flyway) from the scripts in
+`src/main/resources/db/migration`, before the app starts. Hibernate only **checks** it (`ddl-auto=validate`) and the
+app refuses to start when the tables do not match the entities; it never changes the database itself any more.
+
+- `V1__baseline_schema.sql`: the whole schema as it was on 2026-11-10. A new, empty database runs it; the production
+  database (made earlier by `ddl-auto=update`) is recorded as already being at V1 (`baseline-on-migrate`) and never runs it.
+- `V2__legacy_schema_fixes.sql`: the repairs the old `SchemaFixes` runner made on every start, now made once.
+- **Every schema change is a new script** `V<next>__what_it_does.sql` (a new column, table, index, wider column, or a new
+  value of an enum column, whose CHECK lists the allowed values). Never edit a script that has run anywhere: Flyway
+  refuses to start when a run script has changed.
+- `FlywayMigrationTest` runs the scripts on a throwaway PostgreSQL (new database, and a production-like one) and then
+  makes the start-up check; it fails when an entity change has no script yet.
+- `SchemaTool` (a test, run by hand): `./mvnw test -Dtest=SchemaTool -Dschema.export=target/schema.sql` writes the schema
+  the entities describe (to compare when writing a script); `-Dschema.validate.url=... -Dschema.validate.user=...
+  -Dschema.validate.password=...` checks a real database read-only, e.g. production before a deploy.
+- In an emergency `DDL_AUTO=update` brings back the old behaviour for one start; then write the missing script.
+
+## Server sizing settings
+
+| Variable | Default | What it does |
+|---|---|---|
+| `TOMCAT_THREADS` | `40` | Requests worked on at once (80 on a 2 GB / 1+ CPU plan) |
+| `TOMCAT_ACCEPT_COUNT` | `100` | Connections waiting their turn beyond those |
+| `LOGIN_MAX_CHECKS` | `0` (= CPU cores, at least 1) | PIN checks at once (each one is a CPU core for ~0.1 s) |
+| `LOGIN_CHECK_WAIT` | `PT5S` | How long a sign-in waits for its turn before a 503 "busy" (the portal retries it) |
+| `DB_POOL_SIZE` | `10` | Database connections (within the Supabase pooler's limit) |
+| `JAVA_OPTS` | (none) | Extra JVM options, e.g. `-XX:MaxRAMPercentage=70` on a 2 GB plan |
+
+## Website support chat (enquiries)
+
+The landing page's chat answers only from `companyportal-web/src/app/data/support-chat.config.ts` (pricing text,
+questions and answers, demo times). Call-back and demo requests go to `POST /api/public/enquiries` (open, no sign-in),
+are saved in `sales_enquiries` (migration V3) and mailed in the background through the portal's mail settings.
+The sales team follows them up in the portal under **Administration > Website enquiries** (`/portal/admin/enquiries`,
+checkpoint 9030, API `/api/enquiries`): status (New, Contacted, Demo scheduled, Won, Closed) and notes (migration V4).
+Owners and admins have it; anyone else needs the menu's own tick in Menu access.
+
+| Variable | Default | What it does |
+|---|---|---|
+| `ENQUIRY_NOTIFY_TO` | (none) | Sales team address(es), comma separated. Empty = saved only, no mail |
+| `ENQUIRY_PER_VISITOR` | `5` | Requests one visitor may send an hour (then 429) |
+| `ENQUIRY_PER_HOUR` | `60` | Requests the whole site accepts an hour |
+
 ## First start
 
 On an empty database the app creates the first brand (`BRAND_CODE` / `BRAND_NAME`, default **HQ – My Company**) and

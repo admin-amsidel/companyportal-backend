@@ -190,13 +190,15 @@ public final class Menus {
     public static final String MANUAL_SALES_TASKS = "MANUAL_SALES_TASKS";
     public static final String MANUAL_SALES_DETAILS = "MANUAL_SALES_DETAILS";
     public static final String PERF_TYPE_MANUAL_SALES = "PERF_TYPE_MANUAL_SALES";
+    /** Administration > Website enquiries: call-back and demo requests from the website chat, with their follow-up. */
+    public static final String ENQUIRIES = "ENQUIRIES";
     /** Sub-menus that a tick on their parent menu does not give: each needs its own tick. */
     public static final java.util.Set<String> OWN_TICK = java.util.Set.of(EXPORT_EXCEL, TA_EDIT_STOPS, TA_MANUAL, TA_GPS, TA_CHANGE_DISTANCE, TA_SETTLE, OVERVIEW_TRAVEL, SALES_COL_QUOTATIONS, SALES_COL_ORDERS, SALES_COL_INVOICES, EMP_DELETE, EMP_GENERATOR, CONFIGURATIONS, OVERVIEW_STORAGE, OVERVIEW_SALES, OVERVIEW_ACTIVE_USERS, MANUAL_SALES_LOG, MANUAL_SALES_TASKS, MANUAL_SALES_DETAILS, PERF_TYPE_MANUAL_SALES, STORAGE_USAGE, STORAGE_DELETE, PROD_STOCK_APPROVE, ATT_NO_PHOTO, CUST_NEW_QUOTE, CUST_NEW_INVOICE,
             CUST_ADD, CUST_EDIT, CUST_DELETE, MAIL_EMAIL, MAIL_WHATSAPP, MAIL_ALL, MAIL_PICK, MAIL_PICTURE, MAIL_ATTACH, MAIL_CONFIG,
             PERF_TYPE_GENERAL, PERF_TYPE_SALES, PERF_TYPE_ORDERS, PERF_TYPE_WORKLOG, PAY_TAX_REGIME,
             CHAT_GROUP_CREATE, CHAT_GROUP_ADD, TMAIL_CONFIG, TMAIL_EMAIL, TMAIL_WHATSAPP, TMAIL_ALL_CUSTOMERS, TMAIL_ALL_SUPPLIERS,
             TMAIL_PICK, TMAIL_PICTURE, TMAIL_ATTACH, OFFER_LETTERS, OFFER_EDIT, OFFER_DELETE, WORK_APPROVALS, ATT_HOURS_CHECK,
-            AGENT_COMMISSIONS, AGENT_ADD, AGENT_EDIT, AGENT_COMMISSION_STATUS);
+            AGENT_COMMISSIONS, AGENT_ADD, AGENT_EDIT, AGENT_COMMISSION_STATUS, ENQUIRIES);
     /** Any page of the product portal. */
     public static final String[] PRODUCT_PORTAL = {PROD_HOME, PROD_ITEMS, PROD_TYPES, PROD_SUPPLIERS, PROD_PURCHASES,
             PROD_QUOTES, PROD_ORDERS, PROD_INVOICES, PROD_REPORTS, PROD_PROJECTS, PROD_LEDGER, PROD_RECONCILE, PROD_MAIL, PROD_PAY, PROD_PAY_MANUAL, PROD_PROJECT_STATUS, PROD_STOCK_APPROVE};
@@ -299,6 +301,7 @@ public final class Menus {
             new Def(CONFIGURATIONS, "Configuration", "Add, change and delete the settings that override the properties file, such as how long a sign-in lasts. Takes effect at once. Its own tick", 9020, "ADMIN", "/portal/admin/configurations", "pi-cog"),
             new Def(USER_TYPES, "Portal access roles", "The roles given to employees for portal access (Admin, Manager and Employee levels), for every brand or one brand; a role in use cannot be changed or deleted. Changing them needs the Owner or Admin user type", 9023, "ADMIN", "/portal/admin/roles", "pi-id-card"),
             new Def(EXPORT_EXCEL, "Export to Excel", "The Export to Excel buttons on every screen: lists, setup screens, attendance, work log, reports and P&L. The file holds what the person may already see on that screen. Its own tick", 9022, "ADMIN", null, "pi-file-excel"),
+            new Def(ENQUIRIES, "Website enquiries", "Call-back and demo requests left in the website's support chat: name, phone, email, demo date, what they looked at, and the sales team's status and notes. Personal details, so its own tick", 9030, "ADMIN", "/portal/admin/enquiries", "pi-inbox"),
             new Def(EMP_GENERATOR, "Employee generator", "Create many test employees at once: real accounts with the next numbers of a brand and one password. Its own tick", 9021, "ADMIN", "/portal/admin/employee-generator", "pi-user-plus"),
 
             // ---- product portal ----

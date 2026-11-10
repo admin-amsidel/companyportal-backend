@@ -4,6 +4,7 @@
  */
 package com.companyportal.backend.service;
 
+import com.companyportal.backend.config.MailPortConfig;
 import com.companyportal.backend.dto.MailAccountRequest;
 import com.companyportal.backend.entity.MailBrandAccount;
 import com.companyportal.backend.exception.ApiException;
@@ -120,8 +121,7 @@ public class BrandMailSenders {
         s.setDefaultEncoding("UTF-8");
         Properties p = s.getJavaMailProperties();
         p.put("mail.smtp.auth", "true");
-        p.put("mail.smtp.starttls.enable", "true");
-        p.put("mail.smtp.starttls.required", "true");
+        MailPortConfig.secure(p, port);
         p.put("mail.smtp.connectiontimeout", "10000");
         p.put("mail.smtp.timeout", "20000");
         p.put("mail.smtp.writetimeout", "20000");

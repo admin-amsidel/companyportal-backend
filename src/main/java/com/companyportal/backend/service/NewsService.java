@@ -49,6 +49,7 @@ public class NewsService {
     private final EmployeeRepository employeeRepository;
     private final MenuAccessService menuAccess;
     private final TradeAccess access;
+    private final TodayFeedCache todayFeed;
 
     private boolean canManage(AuthUser me) {
         return menuAccess.can(me, Menus.NEWS);
@@ -64,16 +65,28 @@ public class NewsService {
     @Transactional(readOnly = true)
     public Feed feed(AuthUser me) {
         LocalDate today = access.today();
-        List<NewsView> news = repository.live(today).stream().filter(n -> mine(me, n)).map(n -> view(n, today)).toList();
-        MonthDay day = MonthDay.from(today);
-        List<Birthday> birthdays = employeeRepository.withBirthdays().stream()
-                .filter(e -> birthday(e.getDob(), today, day))
-                .filter(e -> access.allBrands(me) || e.getBrand() == null || e.getBrand().getId().equals(me.brandId()))
-                .sorted(Comparator.comparing(Employee::getName))
-                .map(e -> new Birthday(e.getId(), e.getName(), e.getDesignation() == null ? null : e.getDesignation().getName(),
-                        e.getBrand() == null ? null : e.getBrand().getCode(), e.getPhotoUpdatedAt()))
-                .toList();
+        TodayFeedCache.Today t = todayFeed.get(today, () -> loadToday(today));
+        boolean everyBrand = access.allBrands(me);
+        List<NewsView> news = t.news().stream()
+                .filter(n -> n.brandId() == null || everyBrand || n.brandId().equals(me.brandId())).toList();
+        List<Birthday> birthdays = t.birthdays().stream()
+                .filter(b -> everyBrand || b.brandId() == null || b.brandId().equals(me.brandId()))
+                .map(TodayFeedCache.BirthdayOf::birthday).toList();
         return new Feed(news, birthdays, canManage(me));
+    }
+
+    /** Today's news and birthdays for everyone (each person sees their brand's part of them): see TodayFeedCache. */
+    private TodayFeedCache.Today loadToday(LocalDate today) {
+        List<NewsView> news = repository.live(today).stream().map(n -> view(n, today)).toList();
+        MonthDay day = MonthDay.from(today);
+        List<TodayFeedCache.BirthdayOf> birthdays = employeeRepository.withBirthdays().stream()
+                .filter(e -> birthday(e.getDob(), today, day))
+                .sorted(Comparator.comparing(Employee::getName))
+                .map(e -> new TodayFeedCache.BirthdayOf(e.getBrand() == null ? null : e.getBrand().getId(),
+                        new Birthday(e.getId(), e.getName(), e.getDesignation() == null ? null : e.getDesignation().getName(),
+                                e.getBrand() == null ? null : e.getBrand().getCode(), e.getPhotoUpdatedAt())))
+                .toList();
+        return new TodayFeedCache.Today(today, news, birthdays);
     }
 
     /** Born on this day of the year; 29 February birthdays are on 28 February in other years. */
@@ -101,6 +114,7 @@ public class NewsService {
     @Transactional
     public NewsView create(AuthUser me, NewsBody body) {
         requireManage(me);
+        todayFeed.forget();
         NewsPost n = new NewsPost();
         n.setCreatedBy(access.me(me));
         fill(n, body);
@@ -111,6 +125,7 @@ public class NewsService {
     @Transactional
     public NewsView update(AuthUser me, Long id, NewsBody body) {
         requireManage(me);
+        todayFeed.forget();
         NewsPost n = find(id);
         fill(n, body);
         n.setUpdatedBy(access.me(me));
@@ -121,6 +136,7 @@ public class NewsService {
     @Transactional
     public void delete(AuthUser me, Long id) {
         requireManage(me);
+        todayFeed.forget();
         NewsPost n = find(id);
         imageRepository.deleteById(id);
         storedFiles.forget(StoredFileCategory.NEWS_PICTURE, id);
@@ -149,6 +165,7 @@ public class NewsService {
     @Transactional
     public NewsView saveImage(AuthUser me, Long id, MultipartFile file) {
         requireManage(me);
+        todayFeed.forget();
         NewsPost n = find(id);
         if (file == null || file.isEmpty()) {
             throw ApiException.badRequest("Choose a picture to upload");
@@ -180,6 +197,7 @@ public class NewsService {
     @Transactional
     public NewsView deleteImage(AuthUser me, Long id) {
         requireManage(me);
+        todayFeed.forget();
         NewsPost n = find(id);
         imageRepository.deleteById(id);
         storedFiles.forget(StoredFileCategory.NEWS_PICTURE, id);

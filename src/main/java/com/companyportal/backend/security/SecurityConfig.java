@@ -59,6 +59,8 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/api/public/news", "/api/public/news/*/image").permitAll()
                         // a customer's project status link: read only, no sign-in
                         .requestMatchers(HttpMethod.GET, "/api/public/project-status/*/*", "/api/public/project-status/*/*/photos/*").permitAll()
+                        // the website's support chat: a visitor leaves a call-back or demo request (write only)
+                        .requestMatchers(HttpMethod.POST, "/api/public/enquiries").permitAll()
                         // reachable with a temporary PIN too, so the person can replace it
                         .requestMatchers("/api/auth/**").authenticated()
                         // public website reads products; only owners and admins change them
