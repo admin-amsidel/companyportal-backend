@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -60,6 +60,7 @@ public class EnquiryService {
     private final int perVisitor;
     private final int perSite;
     private final boolean confirmVisitor;
+    private final int maxMailsPerDay;
 
     /** Guarded by bySite. */
     private final Map<String, Deque<Instant>> byVisitor = new HashMap<>();
@@ -76,7 +77,8 @@ public class EnquiryService {
                           @Value("${app.enquiries.notify-to:}") String notifyTo,
                           @Value("${app.enquiries.per-visitor-per-hour:5}") int perVisitor,
                           @Value("${app.enquiries.per-hour:60}") int perSite,
-                          @Value("${app.enquiries.confirm-visitor:true}") boolean confirmVisitor) {
+                          @Value("${app.enquiries.confirm-visitor:true}") boolean confirmVisitor,
+                          @Value("${app.enquiries.max-mails-per-day:10}") int maxMailsPerDay) {
         this.repository = repository;
         this.mailService = mailService;
         this.mailSender = mailSender;
@@ -88,6 +90,7 @@ public class EnquiryService {
         this.perVisitor = perVisitor;
         this.perSite = perSite;
         this.confirmVisitor = confirmVisitor;
+        this.maxMailsPerDay = Math.max(0, maxMailsPerDay);
     }
 
     public EnquiryReceived receive(EnquiryRequest req, String visitor) {
@@ -163,6 +166,7 @@ public class EnquiryService {
             return;
         }
         if (notifyTo.length > 0) {
+            if (!underDailyLimit(e, "sales team")) return;
             try {
                 send(sender, setup, mails.toSales(e), notifyTo, e.getEmail());
                 repository.markNotified(e.getId());
@@ -171,13 +175,30 @@ public class EnquiryService {
             }
         }
         if (confirmVisitor) {
+            if (!underDailyLimit(e, "visitor")) return;
             try {
                 // replies go to the sales team, not to the no-reply sender
                 send(sender, setup, mails.toVisitor(e), new String[]{e.getEmail()}, notifyTo.length > 0 ? notifyTo[0] : null);
+                repository.markVisitorNotified(e.getId());
             } catch (MailException | MessagingException | UnsupportedEncodingException ex) {
                 log.warn("Enquiry {}: the confirmation to the visitor failed: {}", e.getId(), ex.getMessage());
             }
         }
+    }
+
+    /**
+     * The chat may send only so many mails a day (app.enquiries.max-mails-per-day, India's day), so a flood of requests
+     * cannot use up the mail account's daily quota that staff mail needs. Past it the enquiry is still saved and shows
+     * in the portal (Website enquiries, and the notification bell); only the mail is skipped.
+     */
+    private boolean underDailyLimit(SalesEnquiry e, String to) {
+        java.time.Instant dayStart = LocalDate.now(clock.withZone(zone)).atStartOfDay(zone).toInstant();
+        long sent = repository.mailsSince(dayStart);
+        if (sent >= maxMailsPerDay) {
+            log.warn("Enquiry {} saved; no mail to the {}: today's limit of {} chat mails is reached", e.getId(), to, maxMailsPerDay);
+            return false;
+        }
+        return true;
     }
 
     private static void send(JavaMailSender sender, MailSetup setup, EnquiryMails.Mail mail, String[] to, String replyTo)

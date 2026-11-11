@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -459,6 +459,57 @@ class PerformanceTest {
         json(put("/api/tasks/" + task), owner, workTask(code, "Kumar windows")).andExpect(status().isOk());
         mockMvc.perform(get("/api/performance/cycles/" + cycle + "/me").header("Authorization", auth(emp[1])))
                 .andExpect(jsonPath("$.goals[?(@.id == " + g + ")].tasks[*].worklog.code", contains(code)));
+    }
+
+    @Test
+    void ownersAndAdminsDeleteATaskWithItsLogsAndGoalItems() throws Exception {
+        String[] emp = employee();
+        String code = "DEL-" + seq;
+        String task = idOf(json(post("/api/tasks"), owner, workTask(code, "Test data " + seq, emp[0])).andExpect(status().isCreated()));
+        String kept = idOf(json(post("/api/tasks"), owner, workTask(code + "K", "Real work " + seq, emp[0])).andExpect(status().isCreated()));
+        json(post("/api/worklog/entries"), emp[1], """
+                {"workDate":"%s","taskId":"%s","hours":2,"description":"Testing"}""".formatted(TODAY.minusDays(1), code))
+                .andExpect(status().isCreated());
+        json(post("/api/worklog/entries"), emp[1], """
+                {"workDate":"%s","taskId":"%s","hours":1.5,"description":"Real"}""".formatted(TODAY.minusDays(1), code + "K"))
+                .andExpect(status().isCreated());
+        approveAll();
+        String g = idOf(json(post("/api/performance/cycles/" + cycle + "/employees/" + emp[0] + "/goals"), lead, """
+                {"title":"Task worklog","type":"TASK_WORKLOG","weightage":20,"startDate":"%s","endDate":"%s","tasks":[]}"""
+                .formatted(TODAY.minusMonths(1), TODAY.plusMonths(1))).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.tasks", hasSize(2))));
+        // completed and reviewed: deleting the task still takes it off the goal
+        String review = body(mockMvc.perform(get("/api/performance/cycles/" + cycle + "/me").header("Authorization", auth(emp[1]))));
+        int sub = JsonPath.<List<Integer>>read(review, "$.goals[?(@.id == " + g + ")].tasks[?(@.worklog.code == '" + code + "')].id").get(0);
+        json(put("/api/performance/goals/" + g + "/tasks/" + sub + "/completion"), emp[1], "{\"completed\":true,\"rating\":4}").andExpect(status().isOk());
+        json(put("/api/performance/goals/" + g + "/tasks/" + sub + "/review"), lead, "{\"rating\":3,\"comment\":\"ok\"}").andExpect(status().isOk());
+
+        // nobody but owners and admins, not even a manager or someone with the Tasks menu
+        String[] withTasks = employee();
+        String tasksPerson = withTasks[1];
+        json(put("/api/menu-access/EMPLOYEE/" + withTasks[0]), owner, "{\"checkpoints\":[\"3002\"]}").andExpect(status().isOk());
+        for (String who : List.of(lead, emp[1], tasksPerson)) {
+            mockMvc.perform(get("/api/tasks/" + task + "/delete-check").header("Authorization", auth(who))).andExpect(status().isForbidden());
+            mockMvc.perform(delete("/api/tasks/" + task).header("Authorization", auth(who))).andExpect(status().isForbidden());
+        }
+
+        mockMvc.perform(get("/api/tasks/" + task + "/delete-check").header("Authorization", auth(owner))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(code)).andExpect(jsonPath("$.logEntries").value(1))
+                .andExpect(jsonPath("$.hours").value(2.0)).andExpect(jsonPath("$.loggedBy").value(1))
+                .andExpect(jsonPath("$.assignees").value(1)).andExpect(jsonPath("$.goalItems").value(1));
+        create("Admin " + seq, "pf.adm" + seq, "ADMIN", null);
+        String admin = signIn("pf.adm" + seq);
+        mockMvc.perform(delete("/api/tasks/" + task).header("Authorization", auth(admin))).andExpect(status().isOk())
+                .andExpect(jsonPath("$.logEntries").value(1));
+
+        // gone with its hours; the other task, its hours and the goal stay
+        mockMvc.perform(get("/api/tasks").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$[*].code", not(hasItem(code))))
+                .andExpect(jsonPath("$[?(@.code == '" + code + "K')].loggedHours", hasItem(1.5)));
+        mockMvc.perform(get("/api/performance/cycles/" + cycle + "/me").header("Authorization", auth(emp[1])))
+                .andExpect(jsonPath("$.goals[?(@.id == " + g + ")].tasks[*].worklog.code", contains(code + "K")));
+        mockMvc.perform(get("/api/tasks/" + kept + "/logs").header("Authorization", auth(owner))).andExpect(status().isOk());
+        mockMvc.perform(delete("/api/tasks/" + task).header("Authorization", auth(owner))).andExpect(status().isNotFound());
     }
 
     @Test

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** The website enquiry mails: the staff mail card, the details, the buttons, and what visitors typed escaped. */
 class EnquiryMailsTest {
 
-    private final EnquiryMails mails = new EnquiryMails("Asia/Kolkata", "COMPANY PORTAL", "AMSIDEL Technologies",
+    private final EnquiryMails mails = new EnquiryMails("Asia/Kolkata", "COMPANY PORTAL", "IANEL Technologies",
             "+91 98470 00000", "https://portal.example.com/");
 
     private static SalesEnquiry demo() {
@@ -59,10 +59,10 @@ class EnquiryMailsTest {
         assertThat(m.subject()).isEqualTo("Your Company Portal demo request");
         assertThat(m.html())
                 .contains("Dear Asha,", "Thursday, 12 November 2026 at 3:30 pm", "Our service team will contact you shortly")
-                .contains("+91 98470 00000", "Team AMSIDEL Technologies")
+                .contains("+91 98470 00000", "Team IANEL Technologies")
                 // what sales notes for themselves is not shown to the visitor
                 .doesNotContain("Pricing; Payroll", "portal/admin");
-        assertThat(m.plain()).startsWith("Dear Asha,").contains("Warm regards,\nTeam AMSIDEL Technologies");
+        assertThat(m.plain()).startsWith("Dear Asha,").contains("Warm regards,\nTeam IANEL Technologies");
 
         SalesEnquiry callBack = demo();
         callBack.setKind(EnquiryKind.CALLBACK);
@@ -76,7 +76,7 @@ class EnquiryMailsTest {
 
     @Test
     void withoutAPortalAddressThereIsNoPortalButton() {
-        EnquiryMails plain = new EnquiryMails("Asia/Kolkata", "COMPANY PORTAL", "AMSIDEL Technologies", "", "");
+        EnquiryMails plain = new EnquiryMails("Asia/Kolkata", "COMPANY PORTAL", "IANEL Technologies", "", "");
         assertThat(plain.toSales(demo()).html()).doesNotContain("Open in the portal");
         assertThat(plain.toVisitor(demo()).html()).doesNotContain("call us on");
     }

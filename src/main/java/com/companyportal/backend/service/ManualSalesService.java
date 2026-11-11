@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -58,6 +58,8 @@ public class ManualSalesService {
     private final TeamAccess access;
     private final TradeAccess trade;
     private final EmployeeRepository employees;
+    private final com.companyportal.backend.repository.ProjectRepository projects;
+    private final com.companyportal.backend.repository.GoalRepository goals;
     private final TimeZones timeZones;
 
     /** Which kinds of paper someone sees, each with its own tick. What they may not see is left out here, not just on the page. */
@@ -217,19 +219,82 @@ public class ManualSalesService {
 
     @Transactional
     public TaskView createTask(AuthUser me, TaskBody body) {
+        Links links = links(me, body, null);
         WorkTask task = taskService.createManual(me, request(body));
         ManualSalesTask info = new ManualSalesTask();
         info.setTask(task);
-        apply(info, body);
+        apply(info, body, links);
         return taskView(task, details.save(info), List.of(), Map.of(), timeZones.of(me), false, columns(me));
     }
 
     @Transactional
     public TaskView updateTask(AuthUser me, Long id, TaskBody body) {
-        WorkTask task = taskService.updateManual(me, id, request(body));
         ManualSalesTask info = details.findById(id).orElseThrow(() -> new ResourceNotFoundException("Manual sales task not found: " + id));
-        apply(info, body);
+        Links links = links(me, body, info);
+        WorkTask task = taskService.updateManual(me, id, request(body));
+        apply(info, body, links);
         return taskView(task, info, entries.forTasks(List.of(id)), stageNames(), timeZones.of(me), false, columns(me));
+    }
+
+    /** The project and goal a task is linked to, checked; the body's brand and assignees follow them. */
+    private record Links(com.companyportal.backend.entity.Project project, com.companyportal.backend.entity.Goal goal) {
+    }
+
+    private Links links(AuthUser me, TaskBody body, ManualSalesTask before) {
+        com.companyportal.backend.entity.Project project = null;
+        if (body.getProjectId() != null) {
+            project = projects.findById(body.getProjectId())
+                    .orElseThrow(() -> ApiException.badRequest("Project not found: " + body.getProjectId()));
+            Long brand = project.getBrand().getId();
+            if (myBrandIds(me).stream().noneMatch(brand::equals)) {
+                throw ApiException.forbidden("You can only choose projects of your own brand");
+            }
+            if (body.getBrandId() != null && !body.getBrandId().equals(brand)) {
+                throw ApiException.badRequest(project.getCode() + " is a project of " + project.getBrand().getName() + ", not of the task's brand");
+            }
+            // the task goes to the project's brand
+            body.setBrandId(brand);
+        }
+        com.companyportal.backend.entity.Goal goal = null;
+        if (body.getGoalId() != null) {
+            goal = goals.findById(body.getGoalId()).orElseThrow(() -> ApiException.badRequest("Goal not found: " + body.getGoalId()));
+            Employee person = goal.getReview().getEmployee();
+            boolean same = before != null && before.getGoal() != null && before.getGoal().getId().equals(goal.getId());
+            if (!same) {
+                if (access.team(me).stream().noneMatch(e -> e.getId().equals(person.getId()))) {
+                    throw ApiException.forbidden("You can only choose the goals of people in your team");
+                }
+                if (goal.getReview().getCycle().isClosed()) {
+                    throw ApiException.badRequest("That goal's review cycle is closed");
+                }
+            }
+            // a task for a goal is that person's alone, called after the goal, and of their brand
+            body.setAssigneeIds(List.of(person.getId()));
+            body.setTitle(goal.getTitle());
+            if (person.getBrand() != null) {
+                Long brand = person.getBrand().getId();
+                if (project != null && !project.getBrand().getId().equals(brand)) {
+                    throw ApiException.badRequest(project.getCode() + " is a project of " + project.getBrand().getName() + ", not of "
+                            + person.getName() + "'s brand (" + person.getBrand().getName() + ")");
+                }
+                body.setBrandId(brand);
+            }
+        }
+        return new Links(project, goal);
+    }
+
+    /** A person's goals in open cycles, for a task made for one of them: only people in my team. */
+    @Transactional(readOnly = true)
+    public List<com.companyportal.backend.dto.ManualSalesDtos.GoalChoice> goalChoices(AuthUser me, Long employeeId) {
+        if (access.team(me).stream().noneMatch(e -> e.getId().equals(employeeId))) {
+            throw ApiException.forbidden("You can only see the goals of people in your team");
+        }
+        return goals.openFor(employeeId).stream().map(g -> new com.companyportal.backend.dto.ManualSalesDtos.GoalChoice(g.getId(), g.getTitle(),
+                g.getType().name(), g.getReview().getCycle().getName(), g.getStartDate(), g.getEndDate())).toList();
+    }
+
+    private List<Long> myBrandIds(AuthUser me) {
+        return trade.brands(me).stream().map(b -> b.getId()).toList();
     }
 
     @Transactional(readOnly = true)
@@ -240,7 +305,17 @@ public class ManualSalesService {
         List<String> codes = known.stream().map(d -> d.getTask().getCode()).sorted(Comparator.reverseOrder()).toList();
         // those who have left too, as what they sold still shows
         List<PersonOption> everyone = employees.search(null).stream().filter(e -> TaskService.inScope(me, e.getBrand())).map(ManualSalesService::option).toList();
-        return new TaskOptions(people, brands(me), names(known, ManualSalesTask::getCustomerName), names(known, ManualSalesTask::getProjectName), names(known, ManualSalesTask::getAgentName), codes, everyone);
+        List<com.companyportal.backend.dto.ManualSalesDtos.ProjectChoice> projectChoices = new java.util.ArrayList<>();
+        for (Long brand : myBrandIds(me)) {
+            for (com.companyportal.backend.entity.Project p : projects.forBrand(brand)) {
+                com.companyportal.backend.entity.Agent a = p.getAgent();
+                projectChoices.add(new com.companyportal.backend.dto.ManualSalesDtos.ProjectChoice(p.getId(), p.getCode(), p.getName(), brand,
+                        p.getCustomer().getName(), p.getCustomer().getPhone(), a == null ? null : a.getName(), a == null ? null : a.getPhone()));
+            }
+        }
+        List<PersonOption> goalPeople = access.team(me).stream().map(ManualSalesService::option).toList();
+        return new TaskOptions(people, brands(me), names(known, ManualSalesTask::getCustomerName), names(known, ManualSalesTask::getProjectName),
+                names(known, ManualSalesTask::getAgentName), codes, everyone, projectChoices, goalPeople);
     }
 
     private List<ManualSalesTask> known(AuthUser me) {
@@ -265,12 +340,25 @@ public class ManualSalesService {
         return r;
     }
 
-    private static void apply(ManualSalesTask info, TaskBody body) {
-        info.setCustomerName(clean(body.getCustomerName()));
-        info.setCustomerPhone(Phones.normalize(body.getCustomerPhone(), "Customer phone"));
-        info.setProjectName(clean(body.getProjectName()));
-        info.setAgentName(clean(body.getAgentName()));
-        info.setAgentPhone(Phones.normalize(body.getAgentPhone(), "Agent phone"));
+    private static void apply(ManualSalesTask info, TaskBody body, Links links) {
+        com.companyportal.backend.entity.Project p = links.project();
+        if (p != null) {
+            // from the project, whatever the form sent: customer and agent as they are now (none: left empty)
+            com.companyportal.backend.entity.Agent a = p.getAgent();
+            info.setCustomerName(p.getCustomer().getName());
+            info.setCustomerPhone(p.getCustomer().getPhone());
+            info.setProjectName(p.getName());
+            info.setAgentName(a == null ? null : a.getName());
+            info.setAgentPhone(a == null ? null : a.getPhone());
+        } else {
+            info.setCustomerName(clean(body.getCustomerName()));
+            info.setCustomerPhone(Phones.normalize(body.getCustomerPhone(), "Customer phone"));
+            info.setProjectName(clean(body.getProjectName()));
+            info.setAgentName(clean(body.getAgentName()));
+            info.setAgentPhone(Phones.normalize(body.getAgentPhone(), "Agent phone"));
+        }
+        info.setProject(p);
+        info.setGoal(links.goal());
     }
 
     private static TaskView taskView(WorkTask t, ManualSalesTask info, List<ManualSalesEntry> list, Map<String, String> stageNames, ZoneId zone, boolean narrowed, Columns c) {
@@ -283,7 +371,10 @@ public class ManualSalesService {
                 t.getBrand() == null ? null : t.getBrand().getCode(), symbol(t.getBrand()), info.getCustomerName(), info.getCustomerPhone(), info.getProjectName(),
                 info.getAgentName(), info.getAgentPhone(), t.getAssignees().stream().map(a -> new Assignee(a.getId(), a.getName())).sorted(Comparator.comparing(Assignee::name)).toList(), latest,
                 c.quotations() ? sum(counted, ManualSalesKind.QUOTATION) : null, c.salesOrders() ? ordered : null, c.invoices() ? invoiced : null,
-                narrowed || !c.salesOrders() || !c.invoices() ? null : ordered.subtract(invoiced), t.getCreatedBy().getName(), createdOn(t, zone));
+                narrowed || !c.salesOrders() || !c.invoices() ? null : ordered.subtract(invoiced), t.getCreatedBy().getName(), createdOn(t, zone),
+                info.getProject() == null ? null : info.getProject().getId(), info.getProject() == null ? null : info.getProject().getCode(),
+                info.getGoal() == null ? null : info.getGoal().getId(), info.getGoal() == null ? null : info.getGoal().getTitle(),
+                info.getGoal() == null ? null : info.getGoal().getReview().getEmployee().getId());
     }
 
     private static BigDecimal sum(List<ManualSalesEntry> list, ManualSalesKind kind) {

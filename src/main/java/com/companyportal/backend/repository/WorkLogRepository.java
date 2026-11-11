@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.repository;
 
@@ -23,6 +23,11 @@ public interface WorkLogRepository extends JpaRepository<WorkLog, Long> {
     /** Everything logged against one task, with who logged it: newest day first. */
     @Query("select w from WorkLog w join fetch w.employee where w.task.id = :taskId order by w.workDate desc, w.sequence desc")
     List<WorkLog> forTask(@Param("taskId") Long taskId);
+
+    /** Deleting a task: every work log entry against it goes too (Manual Sales details first). */
+    @org.springframework.data.jpa.repository.Modifying
+    @Query("delete from WorkLog w where w.task.id = :taskId")
+    int deleteForTask(@Param("taskId") Long taskId);
 
     /** Hours logged per task: rows of [task id, total hours]. */
     @Query("select w.task.id, sum(w.hours) from WorkLog w where w.task is not null and (w.approval is null or w.approval = com.companyportal.backend.entity.ApprovalStatus.APPROVED) group by w.task.id")

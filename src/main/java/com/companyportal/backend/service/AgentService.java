@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -128,6 +128,15 @@ public class AgentService {
         a.setAddress(text(body.address()));
         a.setLocation(text(body.location()));
         a.setUpiId(text(body.upiId()));
+        // a bank transfer needs both: the account number and its branch's IFSC
+        String account = text(body.bankAccount());
+        String ifsc = text(body.ifsc());
+        if ((account == null) != (ifsc == null)) {
+            throw ApiException.badRequest(account == null ? "Give the bank account number too, or leave out the IFSC"
+                    : "Give the IFSC too, or leave out the bank account number");
+        }
+        a.setBankAccountNumber(account);
+        a.setIfscCode(ifsc == null ? null : ifsc.toUpperCase(java.util.Locale.ROOT));
         a.setNotes(text(body.notes()));
     }
 
@@ -333,7 +342,7 @@ public class AgentService {
         Agent a = c.getAgent();
         Project p = c.getProject();
         ProjectMoney money = ProjectService.money(p, bills);
-        return new Commission(c.getId(), a.getId(), a.getCode(), a.getName(), a.getPhone(), a.getUpiId(), p.getId(), p.getCode(), p.getName(), p.getCustomer().getName(),
+        return new Commission(c.getId(), a.getId(), a.getCode(), a.getName(), a.getPhone(), a.getUpiId(), a.getBankAccountNumber(), a.getIfscCode(), p.getId(), p.getCode(), p.getName(), p.getCustomer().getName(),
                 p.getBrand().getId(), p.getBrand().getCode(), p.getBrand().getCurrency().symbol(), c.getAmount(), c.getCompletedOn(), c.getRemarks(), c.getStatus(),
                 c.getTransactionId(), c.getPaidOn(), c.getPaymentRemarks(), c.getStatusChangedBy() == null ? null : c.getStatusChangedBy().getName(), c.getStatusChangedAt(),
                 money.paid(), money.toPay());
@@ -344,7 +353,8 @@ public class AgentService {
         BigDecimal queued = commissions == null ? null : sum(commissions, AgentCommission.Status.QUEUED);
         BigDecimal settled = commissions == null ? null : sum(commissions, AgentCommission.Status.SETTLED);
         Brand b = a.getBrand();
-        return new Row(a.getId(), a.getCode(), b.getId(), b.getCode(), b.getName(), a.getName(), a.getPhone(), a.getAddress(), a.getLocation(), a.getUpiId(), a.getNotes(),
+        return new Row(a.getId(), a.getCode(), b.getId(), b.getCode(), b.getName(), a.getName(), a.getPhone(), a.getAddress(), a.getLocation(), a.getUpiId(),
+                a.getBankAccountNumber(), a.getIfscCode(), a.getNotes(),
                 a.isActive(), a.getPhotoUpdatedAt(), commissions == null ? null : commissions.size(), queued, settled, b.getCurrency().symbol());
     }
 

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -37,6 +37,8 @@ import java.util.Set;
 public class NotificationService {
 
     private final MeetingRepository meetings;
+    private final com.companyportal.backend.repository.SalesEnquiryRepository enquiries;
+    private final MenuAccessService menuAccess;
     private final NotificationClearRepository clears;
     private final Clock clock;
     private final TimeZones timeZones;
@@ -46,12 +48,15 @@ public class NotificationService {
     private final int keepDays;
 
     public NotificationService(MeetingRepository meetings, NotificationClearRepository clears, Clock clock,
-                               TimeZones timeZones,
+                               TimeZones timeZones, com.companyportal.backend.repository.SalesEnquiryRepository enquiries,
+                               MenuAccessService menuAccess,
                                @Value("${app.notifications.poll-minutes}") int pollMinutes,
                                @Value("${app.notifications.meeting-lead-minutes}") int leadMinutes,
                                @Value("${app.notifications.meeting-default-length-minutes}") int defaultLengthMinutes,
                                @Value("${app.notifications.keep-days}") int keepDays) {
         this.meetings = meetings;
+        this.enquiries = enquiries;
+        this.menuAccess = menuAccess;
         this.clears = clears;
         this.clock = clock;
         this.timeZones = timeZones;
@@ -63,7 +68,9 @@ public class NotificationService {
 
     @Transactional(readOnly = true)
     public Feed feed(AuthUser me) {
-        return new Feed(pollMinutes, items(me, now(me)));
+        long newEnquiries = menuAccess.can(me, com.companyportal.backend.security.Menus.ENQUIRIES)
+                ? enquiries.countByStatus(com.companyportal.backend.entity.EnquiryStatus.NEW) : 0;
+        return new Feed(pollMinutes, items(me, now(me)), newEnquiries);
     }
 
     /** Clears one; clearing it twice is fine. */

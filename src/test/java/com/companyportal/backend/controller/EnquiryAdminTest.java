@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -100,6 +100,24 @@ class EnquiryAdminTest {
         mockMvc.perform(get(API).header("Authorization", auth(person("EMPLOYEE", TICK)))).andExpect(status().isOk());
         // signed out: nothing
         mockMvc.perform(get(API)).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    void theBellCountsNewEnquiriesForThoseWhoSeeThem() throws Exception {
+        Number fresh = JsonPath.read(body(mockMvc.perform(post("/api/public/enquiries").header("X-Forwarded-For", "10.8.8.8")
+                .contentType(MediaType.APPLICATION_JSON).content("""
+                        {"kind":"DEMO","name":"Bell Test","phone":"9847011111","email":"bell@example.com","demoDate":"%s","demoTime":"11:00"}
+                        """.formatted(java.time.LocalDate.now(java.time.ZoneId.of("Asia/Kolkata")).plusDays(2))))
+                .andExpect(status().isCreated())), "$.id");
+        int before = JsonPath.read(body(mockMvc.perform(get("/api/notifications").header("Authorization", auth(owner)))
+                .andExpect(status().isOk())), "$.newEnquiries");
+        org.assertj.core.api.Assertions.assertThat(before).isGreaterThanOrEqualTo(1);
+        // followed up: no longer new
+        json(put(API + "/" + fresh), owner, "{\"status\":\"CONTACTED\"}").andExpect(status().isOk());
+        mockMvc.perform(get("/api/notifications").header("Authorization", auth(owner))).andExpect(jsonPath("$.newEnquiries").value(before - 1));
+        // the bell without Website enquiries: no count
+        mockMvc.perform(get("/api/notifications").header("Authorization", auth(person("EMPLOYEE", "600"))))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.newEnquiries").value(0));
     }
 
     @Test

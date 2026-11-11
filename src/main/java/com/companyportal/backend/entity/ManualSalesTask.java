@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.entity;
 
@@ -44,4 +44,14 @@ public class ManualSalesTask {
 
     @Column(length = 30)
     private String agentPhone;
+
+    /** The project it is for; its customer, name and agent fill the fields above (kept if the project goes). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "project_id")
+    private Project project;
+
+    /** The Team performance goal it was made for; its person is the task's one assignee. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "goal_id")
+    private Goal goal;
 }

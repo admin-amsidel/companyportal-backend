@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.dto;
 
@@ -17,7 +17,8 @@ public final class NotificationDtos {
     }
 
     /** pollMinutes: how long the page waits before asking again, from the server's settings. */
-    public record Feed(int pollMinutes, List<Item> items) {
+    /** newEnquiries: website enquiries nobody has followed up yet (for those with Website enquiries; else 0). */
+    public record Feed(int pollMinutes, List<Item> items, long newEnquiries) {
     }
 
     /** kind STARTING with started false: about to start; started true: under way. CLOSED: it has ended. */

@@ -15,21 +15,21 @@
     <artifactId>companyportal-backend</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>companyportal-backend</name>
-    <description>Company Portal backend service. Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.</description>
+    <description>Company Portal backend service. Copyright (c) 2026 IANEL Technologies. All rights reserved.</description>
     <organization>
-        <name>AMSIDEL Technologies</name>
+        <name>IANEL Technologies</name>
     </organization>
     <licenses>
         <license>
-            <name>Proprietary: Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.</name>
+            <name>Proprietary: Copyright (c) 2026 IANEL Technologies. All rights reserved.</name>
             <url>LICENSE</url>
             <distribution>manual</distribution>
         </license>
     </licenses>
     <developers>
         <developer>
-            <name>AMSIDEL Technologies</name>
-            <organization>AMSIDEL Technologies</organization>
+            <name>IANEL Technologies</name>
+            <organization>IANEL Technologies</organization>
         </developer>
     </developers>
 

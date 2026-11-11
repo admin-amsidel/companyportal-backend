@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.repository;
 
@@ -26,6 +26,12 @@ public interface ManualSalesEntryRepository extends JpaRepository<ManualSalesEnt
     @Modifying
     @Query("delete from ManualSalesEntry e where e.workLog.id = :workLogId")
     void deleteForLog(@Param("workLogId") Long workLogId);
+
+    /** Deleting a task: the sales details of every work log entry against it, and of its Manual Sales task. */
+    @Modifying
+    @Query("delete from ManualSalesEntry e where e.salesTask.taskId = :taskId or e.workLog.id in"
+            + " (select w.id from WorkLog w where w.task.id = :taskId)")
+    int deleteForTask(@Param("taskId") Long taskId);
 
     @Query(FULL + "where w.id in :logIds")
     List<ManualSalesEntry> forLogs(@Param("logIds") Collection<Long> logIds);

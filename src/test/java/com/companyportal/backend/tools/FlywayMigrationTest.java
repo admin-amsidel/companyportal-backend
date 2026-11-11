@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.tools;
 
@@ -11,27 +11,24 @@ import org.hibernate.cfg.AvailableSettings;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
- * The migration scripts on a real PostgreSQL, the two ways they run in life, each ending with the check the app makes
- * at start-up (ddl-auto=validate: the tables match the entities):
- * <ul>
- *   <li>a new, empty database: V1 makes every table, then V2 onwards;</li>
- *   <li>the production database: tables already made by the old ddl-auto=update, some still in their old shape. Flyway
- *   records it as V1 (baseline) and V2 repairs it.</li>
- * </ul>
- * A failure here means a migration is missing for an entity change: add V&lt;n&gt;__what.sql.
+ * The migration scripts on a real PostgreSQL, in the app's own schema ({@value #SCHEMA}, DB_SCHEMA) as the backend runs
+ * them, ending with the check the app makes at start-up (ddl-auto=validate: the tables match the entities). A failure
+ * here means a migration is missing for an entity change: add the next V&lt;n&gt;__what.sql.
  */
 class FlywayMigrationTest {
+
+    /** application.properties: app.db.schema. */
+    static final String SCHEMA = "portal";
 
     private static EmbeddedPostgres pg;
 
@@ -50,59 +47,109 @@ class FlywayMigrationTest {
     @Test
     void newDatabaseIsMadeByTheMigrations() {
         DataSource db = freshDatabase("fresh");
-        MigrateResult result = flyway(db).migrate();
-        assertThat(result.migrationsExecuted).isGreaterThanOrEqualTo(2);
-        validate("fresh");
+        MigrateResult result = flyway(db, SCHEMA).migrate();
+        assertThat(result.migrationsExecuted).isGreaterThanOrEqualTo(1);
+        assertThat(result.migrations.getFirst().version).isEqualTo("1");
+        validate("fresh", SCHEMA);
         // running again changes nothing
-        assertThat(flyway(db).migrate().migrationsExecuted).isZero();
+        assertThat(flyway(db, SCHEMA).migrate().migrationsExecuted).isZero();
+        JdbcTemplate jdbc = new JdbcTemplate(db);
+        // everything is in the app's schema, history included; nothing in public
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname = 'portal' and tablename in ('employees', 'flyway_schema_history')", Integer.class))
+                .isEqualTo(2);
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname = 'public'", Integer.class)).isZero();
+        rowLevelSecurityIsOnEverywhere(jdbc, SCHEMA);
     }
 
     @Test
-    void productionDatabaseIsBaselinedAndRepaired() throws Exception {
-        DataSource db = freshDatabase("legacy");
+    void dataStillInPublicStopsTheStartInsteadOfOpeningAnEmptyPortal() {
+        DataSource db = freshDatabase("still_public");
         JdbcTemplate jdbc = new JdbcTemplate(db);
-        // tables as ddl-auto=update left them (no Flyway history yet) ...
-        String v1 = new ClassPathResource("db/migration/V1__baseline_schema.sql").getContentAsString(StandardCharsets.UTF_8);
-        jdbc.execute(v1);
-        // ... with the old shapes that SchemaFixes used to repair on every start
-        jdbc.execute("alter table goals alter column self_rating type integer");
-        jdbc.execute("alter table review_skills alter column manager_level type integer");
-        jdbc.execute("alter table projects alter column status type varchar(20)");
-        jdbc.execute("alter table online_payments alter column gateway_order_id set not null");
-        dropChecks(jdbc, "news_posts", "audience");
-        jdbc.execute("alter table news_posts add constraint news_posts_audience_check check (audience in ('EMPLOYEES','CUSTOMERS'))");
-        dropChecks(jdbc, "trade_history", "subject_type");
-        jdbc.execute("alter table trade_history add constraint trade_history_subject_type_check check (subject_type in ('QUOTATION','INVOICE'))");
-        jdbc.execute("alter table designations add constraint uk_old_designation_name unique (name)");
+        // a database from before the move: the tables, with their history, in public
+        flyway(db, "public").migrate();
+        jdbc.update("insert into brands (code, name, active) values ('DW', 'Acme', true)");
 
-        MigrateResult result = flyway(db).migrate();
-
-        assertThat(result.initialSchemaVersion).isEqualTo("1");
-        assertThat(result.migrations).extracting(m -> m.version).doesNotContain("1").contains("2");
-        assertThat(jdbc.queryForObject("select data_type from information_schema.columns where table_name = 'goals' and column_name = 'self_rating'", String.class))
-                .isEqualTo("numeric");
-        assertThat(jdbc.queryForObject("select character_maximum_length from information_schema.columns where table_name = 'projects' and column_name = 'status'", Integer.class))
-                .isEqualTo(30);
-        assertThat(jdbc.queryForObject("select is_nullable from information_schema.columns where table_name = 'online_payments' and column_name = 'gateway_order_id'", String.class))
-                .isEqualTo("YES");
-        // the widened check takes a value the old one refused
-        assertThat(jdbc.queryForObject("select count(*) from pg_constraint where conname = 'ck_news_posts_audience' and pg_get_constraintdef(oid) like '%EVERYONE%'", Integer.class))
-                .isEqualTo(1);
-        assertThat(jdbc.queryForObject("select count(*) from pg_constraint where conname = 'uk_old_designation_name'", Integer.class)).isZero();
-        assertThat(jdbc.queryForObject("select count(*) from doc_sequences where prefix = 'SETUP-NEWS-PUBLIC'", Integer.class)).isEqualTo(1);
-        validate("legacy");
+        assertThatThrownBy(() -> flyway(db, SCHEMA).migrate())
+                .hasMessageContaining("The portal data is in the public schema")
+                .hasMessageContaining("DbBackupTool");
+        assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname = 'portal' and tablename = 'employees'", Integer.class)).isZero();
     }
 
-    private static void dropChecks(JdbcTemplate jdbc, String table, String column) {
-        jdbc.queryForList("select con.conname from pg_constraint con join pg_class rel on rel.oid = con.conrelid"
-                        + " where rel.relname = ? and con.contype = 'c' and pg_get_constraintdef(con.oid) like ?", String.class, table, "%" + column + "%")
-                .forEach(name -> jdbc.execute("alter table " + table + " drop constraint \"" + name + "\""));
+    @Test
+    void tablesWithoutFlywayHistoryAreRefusedNotTakenAsUpToDate() {
+        DataSource db = freshDatabase("no_history");
+        new JdbcTemplate(db).execute("create schema portal; create table portal.employees (id bigint primary key)");
+        assertThatThrownBy(() -> flyway(db, SCHEMA).migrate()).hasMessageContaining("non-empty schema");
     }
 
-    /** The same settings as application.properties. */
-    private static Flyway flyway(DataSource db) {
+    @Test
+    void everyMigrationAfterV1HasAnUndoThatFlywayNeverRuns() throws Exception {
+        var resolver = new org.springframework.core.io.support.PathMatchingResourcePatternResolver();
+        java.util.Set<String> versions = new java.util.TreeSet<>();
+        for (var r : resolver.getResources("classpath:db/migration/V*__*.sql")) {
+            versions.add(r.getFilename().replaceFirst("^V(\\d+)__.*", "$1"));
+        }
+        for (String v : versions) {
+            if (!v.equals("1")) {
+                assertThat(resolver.getResources("classpath:db/undo/U" + v + "__*.sql")).as("db/undo/U" + v + "__*.sql").hasSize(1);
+            }
+        }
+        // the undo scripts are not where Flyway looks, under any name it would run
+        assertThat(resolver.getResources("classpath:db/migration/U*.sql")).isEmpty();
+        assertThat(resolver.getResources("classpath:db/migration/R__*.sql")).isEmpty();
+        DataSource db = freshDatabase("undo_never_run");
+        MigrateResult result = flyway(db, SCHEMA).migrate();
+        assertThat(result.migrations).extracting(m -> m.filepath).noneMatch(f -> f.contains("undo"));
+        assertThat(result.migrationsExecuted).isEqualTo(versions.size());
+    }
+
+    @Test
+    void theLatestMigrationRevertsAndCanBeAppliedAgain() throws Exception {
+        DataSource db = freshDatabase("revert");
+        flyway(db, SCHEMA).migrate();
+        JdbcTemplate jdbc = new JdbcTemplate(db);
+        String history = "select max(version::int) from portal.flyway_schema_history where version is not null and success";
+        int latest = jdbc.queryForObject(history, Integer.class);
+        assertThat(latest).isGreaterThanOrEqualTo(2);
+
+        try (var c = db.getConnection()) {
+            // only the latest one
+            assertThatThrownBy(() -> FlywayRevertTool.revert(c, SCHEMA, "1")).hasMessageContaining("not the latest");
+            FlywayRevertTool.revert(c, SCHEMA, String.valueOf(latest));
+        }
+        assertThat(jdbc.queryForObject(history, Integer.class)).isEqualTo(latest - 1);
+        try (var c = db.getConnection()) {
+            assertThatThrownBy(() -> FlywayRevertTool.revert(c, SCHEMA, String.valueOf(latest))).hasMessageContaining("not the latest");
+        }
+        // the next start applies it again, and the app's check passes
+        assertThat(flyway(db, SCHEMA).migrate().migrationsExecuted).isEqualTo(1);
+        validate("revert", SCHEMA);
+
+        // and every undo script, from the latest down, takes the schema back to V1 (each one checked by reverting it)
+        try (var c = db.getConnection()) {
+            for (int v = latest; v >= 2; v--) {
+                FlywayRevertTool.revert(c, SCHEMA, String.valueOf(v));
+            }
+        }
+        assertThat(jdbc.queryForObject(history, Integer.class)).isEqualTo(1);
+        assertThat(flyway(db, SCHEMA).migrate().migrationsExecuted).isEqualTo(latest - 1);
+        validate("revert", SCHEMA);
+    }
+
+    /** afterMigrate.sql: every table of the app's schema has RLS on (no policies), the app's own tables included. */
+    private static void rowLevelSecurityIsOnEverywhere(JdbcTemplate jdbc, String schema) {
+        assertThat(jdbc.queryForList("select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+                + " where n.nspname = ? and c.relkind in ('r', 'p') and not c.relrowsecurity", String.class, schema)).isEmpty();
+        assertThat(jdbc.queryForObject("select c.relrowsecurity from pg_class c join pg_namespace n on n.oid = c.relnamespace"
+                + " where n.nspname = ? and c.relname = 'employees'", Boolean.class, schema)).isTrue();
+        // the owner (the backend's login) still reads and writes as before
+        assertThat(jdbc.queryForObject("select count(*) from " + schema + ".employees", Integer.class)).isNotNull();
+    }
+
+    /** The same settings as application.properties, in this schema. */
+    static Flyway flyway(DataSource db, String schema) {
         return Flyway.configure().dataSource(db).locations("classpath:db/migration")
-                .baselineOnMigrate(true).baselineVersion("1").load();
+                .schemas(schema).defaultSchema(schema).createSchemas(true).baselineOnMigrate(false).load();
     }
 
     private static DataSource freshDatabase(String name) {
@@ -110,9 +157,15 @@ class FlywayMigrationTest {
         return pg.getDatabase("postgres", name);
     }
 
-    private static void validate(String name) {
+    /** The app's start-up check, with the app's schema as the default one (hibernate.default_schema). */
+    private static void validate(String name, String schema) {
+        validateUrl(pg.getJdbcUrl("postgres", name), schema);
+    }
+
+    static void validateUrl(String url, String schema) {
         Map<String, Object> s = new HashMap<>();
-        s.put(AvailableSettings.JAKARTA_JDBC_URL, pg.getJdbcUrl("postgres", name));
+        s.put(AvailableSettings.DEFAULT_SCHEMA, schema);
+        s.put(AvailableSettings.JAKARTA_JDBC_URL, url);
         s.put(AvailableSettings.JAKARTA_JDBC_USER, "postgres");
         s.put(AvailableSettings.JAKARTA_JDBC_PASSWORD, "");
         s.put(AvailableSettings.HBM2DDL_AUTO, "validate");

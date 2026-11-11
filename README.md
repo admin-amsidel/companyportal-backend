@@ -36,29 +36,80 @@ The database schema is made and changed by [Flyway](https://documentation.red-ga
 `src/main/resources/db/migration`, before the app starts. Hibernate only **checks** it (`ddl-auto=validate`) and the
 app refuses to start when the tables do not match the entities; it never changes the database itself any more.
 
-- `V1__baseline_schema.sql`: the whole schema as it was on 2026-11-10. A new, empty database runs it; the production
-  database (made earlier by `ddl-auto=update`) is recorded as already being at V1 (`baseline-on-migrate`) and never runs it.
-- `V2__legacy_schema_fixes.sql`: the repairs the old `SchemaFixes` runner made on every start, now made once.
-- **Every schema change is a new script** `V<next>__what_it_does.sql` (a new column, table, index, wider column, or a new
-  value of an enum column, whose CHECK lists the allowed values). Never edit a script that has run anywhere: Flyway
+- `V1__portal_schema.sql`: the **whole schema in one script** (the earlier V1-V5 were folded into it on 2026-11-11, when
+  the portal started afresh in its own `portal` schema). A new, empty schema runs it; the tables come empty.
+- **Every schema change is a new script** `V2__what_it_does.sql`, `V3__...` (a new column, table, index, wider column, or a
+  new value of an enum column, whose CHECK lists the allowed values). Never edit a script that has run anywhere: Flyway
   refuses to start when a run script has changed.
-- `FlywayMigrationTest` runs the scripts on a throwaway PostgreSQL (new database, and a production-like one) and then
-  makes the start-up check; it fails when an entity change has no script yet.
+- `beforeMigrate.sql` / `afterMigrate.sql` run around every migrate: the first stops a start on a database whose data is
+  still in `public`, the second turns row level security on for every table.
+- No baseline (`baseline-on-migrate=false`): a schema with tables but no Flyway history is refused, not taken as up to date.
+- `FlywayMigrationTest` runs the scripts on a throwaway PostgreSQL in the `portal` schema and then makes the start-up
+  check; it fails when an entity change has no script yet.
 - `SchemaTool` (a test, run by hand): `./mvnw test -Dtest=SchemaTool -Dschema.export=target/schema.sql` writes the schema
   the entities describe (to compare when writing a script); `-Dschema.validate.url=... -Dschema.validate.user=...
-  -Dschema.validate.password=...` checks a real database read-only, e.g. production before a deploy.
+  -Dschema.validate.password=...` checks a real database read-only.
 - In an emergency `DDL_AUTO=update` brings back the old behaviour for one start; then write the missing script.
+
+### Reverting the last migration (undo scripts)
+
+Every migration from V2 on has an **undo script** in `src/main/resources/db/undo`, named like it with `U`:
+`V2__agent_bank_details.sql` -> `U2__agent_bank_details.sql`. It takes the change back **and** deletes its version from
+`flyway_schema_history`. Write it in the same commit as the migration; `FlywayMigrationTest` fails when one is missing.
+
+- **Never run at start-up:** Flyway reads only `classpath:db/migration` (`spring.flyway.locations`); `db/undo` is not
+  one of its locations, and a test checks that no undo script is ever picked up.
+- **Run by hand, on purpose,** with `FlywayRevertTool`. It reverts only the **latest** migration, in one transaction,
+  and keeps the change only if the history then ends at the version before:
+  ```bash
+  ./mvnw test -Dtest=FlywayRevertTool -Ddb.revert=2 "-Ddb.url=jdbc:postgresql://<host>:5432/postgres?sslmode=require" -Ddb.user=<user>
+  ```
+- **Order:** (1) back up (`DbBackupTool`); (2) deploy a backend **without** the change (its start-up check refuses a
+  database that lacks columns its entities have); (3) revert; (4) remove `V<n>__...sql` (and its `U<n>`) from the code,
+  or the next start applies it again. Data stored only in the reverted columns or tables is lost.
+- In the Supabase SQL editor instead: `set search_path to portal;` then the undo script.
+
+### The `portal` schema
+
+All the portal's tables live in their own schema, **`portal`** (`DB_SCHEMA`), not `public`, so other apps can share the
+same Supabase project, each in a schema of its own. Flyway creates the schema and keeps `flyway_schema_history` there,
+every connection works in it (search path) and Hibernate names it. `afterMigrate.sql` turns row level security on for
+every table in it (no policies: Supabase's Data API gets nothing; the backend owns the tables and is not affected).
+
+A database whose data is still in `public` (from before) is protected: `beforeMigrate.sql` stops the start with a clear
+message instead of opening an empty `portal`. Move the data with `DbBackupTool` (below).
+
+### Backup, restore and moving the data (`DbBackupTool`)
+
+A test run by hand, no `pg_dump` needed; the password comes from `secrets.properties` (or `-Ddb.password=`), never typed.
+The backup names no schema, so a backup of `public` restores into `portal`.
+
+```bash
+# what is there (read only)
+./mvnw test -Dtest=DbBackupTool -Ddb.inspect=true -Ddb.schema=portal "-Ddb.url=jdbc:postgresql://<host>:5432/postgres?sslmode=require" -Ddb.user=<user>
+# back up one schema (read only) into ../db-backups/backup-<time>
+./mvnw test -Dtest=DbBackupTool -Ddb.backup=../db-backups -Ddb.schema=portal "-Ddb.url=..." -Ddb.user=<user>
+# restore into a schema with no tables: Flyway makes them from V1, then the backup's data goes in (its old Flyway history
+# left out); all or nothing, every row count and foreign key checked. -Ddb.restore.mode=exact copies the backup's own tables
+./mvnw test -Dtest=DbBackupTool -Ddb.restore=../db-backups/<folder> -Ddb.schema=portal "-Ddb.url=<new database>" -Ddb.user=<user> -Ddb.password=<password>
+# prove a backup restores the same way, into a throw-away local PostgreSQL, then the app's start-up check
+./mvnw test "-Dtest=DbBackupToolTest#aRealBackupRestores" -Ddb.verify=../db-backups/<folder>
+```
+
+Backups hold personal and salary data: keep them out of git and private.
 
 ## Server sizing settings
 
 | Variable | Default | What it does |
 |---|---|---|
-| `TOMCAT_THREADS` | `40` | Requests worked on at once (80 on a 2 GB / 1+ CPU plan) |
-| `TOMCAT_ACCEPT_COUNT` | `100` | Connections waiting their turn beyond those |
+| `TOMCAT_THREADS` | `100` | Requests worked on at once (Render Pro, 2 CPU / 4 GB; 40 on a 512 MB instance) |
+| `TOMCAT_ACCEPT_COUNT` | `200` | Connections waiting their turn beyond those |
 | `LOGIN_MAX_CHECKS` | `0` (= CPU cores, at least 1) | PIN checks at once (each one is a CPU core for ~0.1 s) |
 | `LOGIN_CHECK_WAIT` | `PT5S` | How long a sign-in waits for its turn before a 503 "busy" (the portal retries it) |
-| `DB_POOL_SIZE` | `10` | Database connections (within the Supabase pooler's limit) |
-| `JAVA_OPTS` | (none) | Extra JVM options, e.g. `-XX:MaxRAMPercentage=70` on a 2 GB plan |
+| `DB_POOL_SIZE` | `15` | Database connections: at most the Supabase session pooler's pool size (15 on Pro's Micro compute; raise that first) |
+| `DB_POOL_MIN_IDLE` | `5` | Connections kept open and warm |
+| `JVM_OPTS` | heap 70%, G1 | Memory and garbage collector (Dockerfile); replace for a small instance, see the Dockerfile |
+| `JAVA_OPTS` | (none) | Extra JVM options after those |
 
 ## Website support chat (enquiries)
 

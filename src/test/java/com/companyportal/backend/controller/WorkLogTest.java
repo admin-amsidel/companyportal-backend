@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -218,6 +218,34 @@ class WorkLogTest {
         mockMvc.perform(post("/api/tasks").header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
                         .content("{\"code\":\"BRT-2\",\"title\":\"Group work\",\"status\":\"OPEN\",\"assigneeIds\":[%s]}".formatted(traineeId)))
                 .andExpect(status().isCreated());
+    }
+
+    @Test
+    void aTaskNameIsNotUsedTwice() throws Exception {
+        String json = "{\"code\":\"%s\",\"title\":\"%s\",\"status\":\"%s\",\"brandId\":%d,\"assigneeIds\":[%s]}";
+        String id = idOf(mockMvc.perform(post("/api/tasks").header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.formatted("UNQ-1", "Nair villa windows", "OPEN", dw, traineeId))).andExpect(status().isCreated()));
+        // the same name in another case, with extra spaces, or on a closed task: refused, naming the task that has it
+        for (String same : List.of("Nair villa windows", "nair VILLA windows", "  Nair   villa windows ")) {
+            mockMvc.perform(post("/api/tasks").header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
+                            .content(json.formatted("", same, "OPEN", dw, traineeId)))
+                    .andExpect(status().isConflict())
+                    .andExpect(jsonPath("$.error").value("A task named \"" + same.trim().replaceAll("\\s+", " ")
+                            + "\" already exists (UNQ-1). Give this task a different name."));
+        }
+        mockMvc.perform(put("/api/tasks/" + id).header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.formatted("UNQ-1", "Nair villa windows", "CLOSED", dw, traineeId))).andExpect(status().isOk());
+        mockMvc.perform(post("/api/tasks").header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.formatted("", "Nair villa windows", "OPEN", dw, traineeId))).andExpect(status().isConflict());
+
+        // a task keeps its own name when changed; another task cannot be renamed to it
+        mockMvc.perform(put("/api/tasks/" + id).header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.formatted("UNQ-1", "nair villa windows", "OPEN", dw, traineeId)))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.title").value("nair villa windows"));
+        String other = idOf(mockMvc.perform(post("/api/tasks").header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.formatted("UNQ-2", "Nair villa doors", "OPEN", dw, traineeId))).andExpect(status().isCreated()));
+        mockMvc.perform(put("/api/tasks/" + other).header("Authorization", auth(owner)).contentType(MediaType.APPLICATION_JSON)
+                .content(json.formatted("UNQ-2", "Nair Villa Windows", "OPEN", dw, traineeId))).andExpect(status().isConflict());
     }
 
     @Test

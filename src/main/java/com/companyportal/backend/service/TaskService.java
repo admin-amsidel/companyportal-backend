@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -30,6 +30,7 @@ import java.util.*;
  * Owners and group admins see every task; a brand admin sees group-wide tasks and their brand's, and assigns
  * only people of their brand.
  */
+@lombok.extern.slf4j.Slf4j
 @Service
 @RequiredArgsConstructor
 public class TaskService {
@@ -44,6 +45,8 @@ public class TaskService {
     private final CustomerRepository customerRepository;
     private final PerformanceService performance;
     private final ManualSalesTaskRepository manualSalesTasks;
+    private final com.companyportal.backend.repository.ManualSalesEntryRepository manualSalesEntries;
+    private final jakarta.persistence.EntityManager entityManager;
     private final MenuAccessService menuAccess;
 
     @Transactional(readOnly = true)
@@ -113,6 +116,63 @@ public class TaskService {
         task.getAssignees().forEach(e -> people.add(e.getId()));
         performance.tasksChanged(people);
         return TaskResponse.from(task, hoursPerTask().getOrDefault(task.getId(), BigDecimal.ZERO));
+    }
+
+    /** What deleting a task takes with it, for the confirmation: its work log entries, hours, people and goal items. */
+    public record DeleteCheck(Long id, String code, String title, int logEntries, BigDecimal hours, int loggedBy,
+                              int assignees, int goalItems) {
+    }
+
+    @Transactional(readOnly = true)
+    public DeleteCheck deleteCheck(AuthUser me, Long id) {
+        WorkTask task = deletable(me, id);
+        List<com.companyportal.backend.entity.WorkLog> logs = logRepository.forTask(id);
+        BigDecimal hours = logs.stream().map(com.companyportal.backend.entity.WorkLog::getHours)
+                .filter(Objects::nonNull).reduce(BigDecimal.ZERO, BigDecimal::add);
+        int loggedBy = (int) logs.stream().map(w -> w.getEmployee().getId()).distinct().count();
+        return new DeleteCheck(task.getId(), task.getCode(), task.getTitle(), logs.size(), hours, loggedBy,
+                task.getAssignees().size(), performance.goalItemsFor(id));
+    }
+
+    /**
+     * Deletes a task for good, e.g. test data: with every work log entry against it (and their Manual Sales details),
+     * its Manual Sales details, and its sub-tasks on performance goals. Owners and admins only, whatever the menu
+     * access says; an admin of one brand, only that brand's tasks.
+     */
+    @Transactional
+    public DeleteCheck delete(AuthUser me, Long id) {
+        DeleteCheck what = deleteCheck(me, id);
+        WorkTask task = deletable(me, id);
+        Set<Long> people = new HashSet<>(task.getAssignees().stream().map(Employee::getId).toList());
+        logRepository.forTask(id).forEach(w -> people.add(w.getEmployee().getId()));
+
+        performance.taskDeleted(id);
+        taskRepository.flush();
+        // the bulk deletes below go straight to the database: nothing loaded may still point at what they remove
+        entityManager.clear();
+        manualSalesEntries.deleteForTask(id);
+        logRepository.deleteForTask(id);
+        manualSalesTasks.findById(id).ifPresent(manualSalesTasks::delete);
+        WorkTask gone = taskRepository.findById(id).orElseThrow();
+        gone.getAssignees().clear();
+        taskRepository.delete(gone);
+        taskRepository.flush();
+        performance.tasksChanged(people);
+        log.info("Task {} \"{}\" deleted by {} with {} work log entries and {} goal items",
+                what.code(), what.title(), me.userId(), what.logEntries(), what.goalItems());
+        return what;
+    }
+
+    private WorkTask deletable(AuthUser me, Long id) {
+        if (me.role() != com.companyportal.backend.entity.Role.OWNER && me.role() != com.companyportal.backend.entity.Role.ADMIN) {
+            throw ApiException.forbidden("Only owners and admins can delete tasks");
+        }
+        WorkTask task = taskRepository.findFull(id)
+                .orElseThrow(() -> new ResourceNotFoundException("Task not found: " + id));
+        if (!inScope(me, task.getBrand())) {
+            throw ApiException.forbidden("You can only delete tasks of your own brand");
+        }
+        return task;
     }
 
     /** A Manual Sales worklog task: a work log task with an MS-0001 style code, on no Task worklog goal. */
@@ -200,8 +260,19 @@ public class TaskService {
             assignees.add(e);
         }
 
+        // a task's name is unique too, so nobody logs hours against the wrong one: ignoring case and extra spaces
+        String title = request.getTitle().trim().replaceAll("\\s+", " ");
+        boolean renamed = task.getId() == null || !title.equalsIgnoreCase(task.getTitle() == null ? "" : task.getTitle().trim());
+        if (renamed) {
+            List<String> same = taskRepository.codesWithTitle(title, task.getId());
+            if (!same.isEmpty()) {
+                throw ApiException.conflict("A task named \"" + title + "\" already exists (" + same.getFirst()
+                        + "). Give this task a different name.");
+            }
+        }
+
         task.setCode(code);
-        task.setTitle(request.getTitle().trim());
+        task.setTitle(title);
         task.setDescription(request.getDescription() == null || request.getDescription().isBlank() ? null : request.getDescription().trim());
         task.setStatus(request.getStatus() != null ? request.getStatus() : TaskStatus.OPEN);
         task.setBrand(brand);

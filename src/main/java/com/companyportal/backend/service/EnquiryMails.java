@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -44,7 +44,7 @@ public class EnquiryMails {
 
     public EnquiryMails(@Value("${app.leave.zone:Asia/Kolkata}") String zone,
                         @Value("${app.enquiries.mail-header:COMPANY PORTAL}") String header,
-                        @Value("${app.enquiries.company-name:AMSIDEL Technologies}") String company,
+                        @Value("${app.enquiries.company-name:IANEL Technologies}") String company,
                         @Value("${app.enquiries.phone:}") String phone,
                         @Value("${app.enquiries.portal-url:}") String portalUrl) {
         this.zone = ZoneId.of(zone);

@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.repository;
 
@@ -57,6 +57,10 @@ public interface WorkTaskRepository extends JpaRepository<WorkTask, Long> {
     List<Object[]> markedCompleteByPeople(@Param("ids") java.util.Collection<Long> ids);
 
     boolean existsByCodeIgnoreCase(String code);
+
+    /** Another task (any brand, open or closed, Manual Sales too) with this name, ignoring case; id null = any task. */
+    @Query("select t.code from WorkTask t where lower(trim(t.title)) = lower(:title) and (:id is null or t.id <> :id)")
+    List<String> codesWithTitle(@Param("title") String title, @Param("id") Long id);
 
     /** Highest generated code (TSK-0007), used to make the next one. */
     Optional<WorkTask> findTopByCodeStartingWithOrderByCodeDesc(String prefix);

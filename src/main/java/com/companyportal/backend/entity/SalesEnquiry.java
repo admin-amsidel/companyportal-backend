@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.entity;
 
@@ -55,9 +55,13 @@ public class SalesEnquiry {
 
     private LocalTime demoTime;
 
-    /** Whether the notification mail went out. */
+    /** Whether the notification mail to the sales team went out. */
     @Column(nullable = false)
     private boolean notified;
+
+    /** Whether the "we have your request" mail to the visitor went out. */
+    @Column(nullable = false)
+    private boolean visitorNotified;
 
     @Column(nullable = false, updatable = false)
     private Instant createdAt;

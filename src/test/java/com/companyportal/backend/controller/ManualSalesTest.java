@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -123,6 +123,93 @@ class ManualSalesTest {
 
     private void decide(int logId, boolean approve) throws Exception {
         json(post("/api/work-approvals/decide"), owner, "{\"workLogIds\":[" + logId + "],\"approve\":" + approve + "}").andExpect(status().isOk());
+    }
+
+    private String id(ResultActions r) throws Exception {
+        return String.valueOf((Object) JsonPath.read(body(r), "$.id"));
+    }
+
+    @Test
+    void aTaskForAProjectTakesItsCustomerAndAgent() throws Exception {
+        String customer = id(json(post("/api/trade/customers"), owner, "{\"brandId\":%d,\"name\":\"Varghese Villa\",\"phone\":\"9847033333\"}".formatted(dw))
+                .andExpect(status().isCreated()));
+        String agent = id(json(post("/api/agents"), owner, "{\"brandId\":%d,\"name\":\"Ravi Agent\",\"phone\":\"9847044444\"}".formatted(dw))
+                .andExpect(status().isCreated()));
+        String project = id(json(post("/api/trade/projects"), owner, "{\"brandId\":%d,\"name\":\"Villa windows\",\"customerId\":%s,\"memberIds\":[],\"agentId\":%s}"
+                .formatted(dw, customer, agent)).andExpect(status().isCreated()));
+        String bare = id(json(post("/api/trade/projects"), owner, "{\"brandId\":%d,\"name\":\"No agent job\",\"customerId\":%s,\"memberIds\":[]}"
+                .formatted(dw, customer)).andExpect(status().isCreated()));
+        String[] seller = person(dw, "null", WORK_LOG_PAGE);
+
+        // the form offers my brand's projects with what they fill in
+        mockMvc.perform(get("/api/manual-sales/tasks/options").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.projectChoices[?(@.id == " + project + ")].customerName").value(hasItem("Varghese Villa")))
+                .andExpect(jsonPath("$.projectChoices[?(@.id == " + project + ")].agentName").value(hasItem("Ravi Agent")));
+
+        // whatever names the form sends, the project's are kept
+        json(post("/api/manual-sales/tasks"), owner, """
+                {"title":"Project linked %d","projectId":%s,"customerName":"Typed","agentName":"Typed","assigneeIds":[%s]}
+                """.formatted(++seq, project, seller[0])).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.projectId").value(Integer.parseInt(project)))
+                .andExpect(jsonPath("$.brandId").value(dw))
+                .andExpect(jsonPath("$.customerName").value("Varghese Villa"))
+                .andExpect(jsonPath("$.customerPhone").value("+91 98470 33333"))
+                .andExpect(jsonPath("$.projectName").value("Villa windows"))
+                .andExpect(jsonPath("$.agentName").value("Ravi Agent"))
+                .andExpect(jsonPath("$.agentPhone").value("+91 98470 44444"));
+        // no agent on the project: none on the task
+        json(post("/api/manual-sales/tasks"), owner, """
+                {"title":"No agent %d","projectId":%s,"agentName":"Typed","assigneeIds":[%s]}
+                """.formatted(++seq, bare, seller[0])).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.agentName").doesNotExist()).andExpect(jsonPath("$.customerName").value("Varghese Villa"));
+        // a project of another brand than the task's
+        json(post("/api/manual-sales/tasks"), owner, """
+                {"title":"Wrong brand %d","brandId":%d,"projectId":%s,"assigneeIds":[]}
+                """.formatted(++seq, other, project)).andExpect(status().isBadRequest());
+    }
+
+    @Test
+    void aTaskForATeamGoalIsThatPersonsAlone() throws Exception {
+        LocalDate today = LocalDate.now(ZoneId.of("Asia/Kolkata"));
+        String cycle = id(json(post("/api/performance/cycles"), owner, "{\"name\":\"MS cycle\",\"startDate\":\"%s\",\"endDate\":\"%s\"}"
+                .formatted(today.minusMonths(1), today.plusMonths(5))).andExpect(status().isCreated()));
+        String[] seller = person(dw, "null", WORK_LOG_PAGE);
+        String[] someoneElse = person(dw, "null", WORK_LOG_PAGE);
+        String goal = id(json(post("/api/performance/cycles/" + cycle + "/employees/" + seller[0] + "/goals"), owner, """
+                {"title":"Q3 manual sales","type":"MANUAL_SALES","targetAmount":100000,"weightage":20,"startDate":"%s","endDate":"%s","tasks":[]}
+                """.formatted(today.minusDays(10), today.plusMonths(2))).andExpect(status().isCreated()));
+
+        mockMvc.perform(get("/api/manual-sales/tasks/options").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.goalPeople[*].id").value(hasItem(Integer.parseInt(seller[0]))));
+        mockMvc.perform(get("/api/manual-sales/tasks/goals").param("employeeId", seller[0]).header("Authorization", auth(owner)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[*].title").value(hasItem("Q3 manual sales")))
+                .andExpect(jsonPath("$[0].cycleName").value("MS cycle"));
+
+        // the goal's person is the one assignee, whoever else the form sends
+        // the goal's person is the one assignee, and the task takes their brand, whatever the form sends
+        String task = id(json(post("/api/manual-sales/tasks"), owner, """
+                {"title":"Goal task %d","brandId":null,"goalId":%s,"assigneeIds":[%s]}
+                """.formatted(++seq, goal, someoneElse[0])).andExpect(status().isCreated())
+                .andExpect(jsonPath("$.brandId").value(dw))
+                .andExpect(jsonPath("$.goalId").value(Integer.parseInt(goal)))
+                .andExpect(jsonPath("$.goalTitle").value("Q3 manual sales"))
+                .andExpect(jsonPath("$.title").value("Q3 manual sales"))
+                .andExpect(jsonPath("$.goalEmployeeId").value(Integer.parseInt(seller[0])))
+                .andExpect(jsonPath("$.assignees[*].id").value(contains(Integer.parseInt(seller[0])))));
+        // unticked again: works as before, with the people chosen
+        json(put("/api/manual-sales/tasks/" + task), owner, """
+                {"title":"Goal task %d","brandId":%d,"assigneeIds":[%s,%s]}
+                """.formatted(seq, dw, seller[0], someoneElse[0])).andExpect(status().isOk())
+                .andExpect(jsonPath("$.goalId").doesNotExist()).andExpect(jsonPath("$.assignees", hasSize(2)));
+
+        // only the goals of my team: someone with the Tasks tick and nobody below them
+        String[] taskMaker = person(dw, "null", TASKS);
+        mockMvc.perform(get("/api/manual-sales/tasks/goals").param("employeeId", seller[0]).header("Authorization", auth(taskMaker[1])))
+                .andExpect(status().isForbidden());
+        json(post("/api/manual-sales/tasks"), taskMaker[1], """
+                {"title":"Not mine %d","brandId":%d,"goalId":%s,"assigneeIds":[]}
+                """.formatted(++seq, dw, goal)).andExpect(status().isForbidden());
     }
 
     @Test

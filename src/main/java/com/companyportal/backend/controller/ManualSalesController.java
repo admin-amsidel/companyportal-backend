@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -54,6 +54,13 @@ public class ManualSalesController {
     @GetMapping("/tasks/options")
     public TaskOptions taskOptions(@AuthenticationPrincipal AuthUser me) {
         return service.taskOptions(me);
+    }
+
+    /** A team member's Team performance goals, for a task made for one of them. */
+    @Checkpoint({Menus.MANUAL_SALES_TASKS})
+    @GetMapping("/tasks/goals")
+    public List<com.companyportal.backend.dto.ManualSalesDtos.GoalChoice> goals(@AuthenticationPrincipal AuthUser me, @RequestParam Long employeeId) {
+        return service.goalChoices(me, employeeId);
     }
 
     @Checkpoint({Menus.MANUAL_SALES_TASKS})

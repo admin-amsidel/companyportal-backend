@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -56,6 +56,18 @@ public class TaskController {
     @ResponseStatus(HttpStatus.CREATED)
     public TaskResponse create(@AuthenticationPrincipal AuthUser me, @Valid @RequestBody TaskRequest request) {
         return taskService.create(me, request);
+    }
+
+    /** What deleting the task would remove (for the confirmation). Owners and admins only. */
+    @GetMapping("/{id}/delete-check")
+    public TaskService.DeleteCheck deleteCheck(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        return taskService.deleteCheck(me, id);
+    }
+
+    /** Deletes the task with its work log entries and goal items (test data). Owners and admins only. */
+    @DeleteMapping("/{id}")
+    public TaskService.DeleteCheck delete(@AuthenticationPrincipal AuthUser me, @PathVariable Long id) {
+        return taskService.delete(me, id);
     }
 
     @PutMapping("/{id}")

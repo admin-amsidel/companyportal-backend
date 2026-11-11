@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.dto;
 
@@ -47,6 +47,10 @@ public final class ManualSalesDtos {
         @Size(max = 30)
         private String agentPhone;
         private List<Long> assigneeIds = new ArrayList<>();
+        /** The project it is for: customer, project and agent then come from it (the names above are ignored). */
+        private Long projectId;
+        /** Made for a Team performance goal: its person becomes the one assignee (assigneeIds are ignored). */
+        private Long goalId;
     }
 
     public record Assignee(Long id, String name) {
@@ -55,7 +59,8 @@ public final class ManualSalesDtos {
     /** ordered, invoiced and quoted: approved entries only. balance: ordered less invoiced; null when filtered to part of the task's entries. */
     public record TaskView(Long id, String code, String title, String description, TaskStatus status, Long brandId, String brandCode, String currencySymbol,
                            String customerName, String customerPhone, String projectName, String agentName, String agentPhone, List<Assignee> assignees,
-                           String latestStage, BigDecimal quoted, BigDecimal ordered, BigDecimal invoiced, BigDecimal balance, String createdByName, LocalDate createdOn) {
+                           String latestStage, BigDecimal quoted, BigDecimal ordered, BigDecimal invoiced, BigDecimal balance, String createdByName, LocalDate createdOn,
+                           Long projectId, String projectCode, Long goalId, String goalTitle, Long goalEmployeeId) {
     }
 
     /**
@@ -71,9 +76,21 @@ public final class ManualSalesDtos {
     public record BrandOption(Long id, String code, String name) {
     }
 
-    /** For the task form: who can be assigned, and the names used before, to pick from. */
+    /**
+     * For the task form: who can be assigned, and the names used before, to pick from; the projects of my brand(s) with
+     * their customer and agent; and the people whose Team performance goals I may use (goalPeople).
+     */
     public record TaskOptions(List<PersonOption> people, List<BrandOption> brands, List<String> customers, List<String> projects, List<String> agents,
-                              List<String> taskCodes, List<PersonOption> everyone) {
+                              List<String> taskCodes, List<PersonOption> everyone, List<ProjectChoice> projectChoices, List<PersonOption> goalPeople) {
+    }
+
+    /** A project to make a task for, with what it fills in; customerPhone, agentName, agentPhone may be null. */
+    public record ProjectChoice(Long id, String code, String name, Long brandId, String customerName, String customerPhone, String agentName,
+                                String agentPhone) {
+    }
+
+    /** A Team performance goal of a person, in a review cycle still open. */
+    public record GoalChoice(Long id, String title, String type, String cycleName, LocalDate startDate, LocalDate endDate) {
     }
 
     // ---- a work log entry ----

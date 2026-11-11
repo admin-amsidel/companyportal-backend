@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -266,7 +266,7 @@ class WorkApprovalTest {
 
     private String task(String assignee) throws Exception {
         String code = "WA-" + (++seq);
-        json(post("/api/tasks"), owner, "{\"code\":\"%s\",\"title\":\"Task\",\"brandId\":%d,\"assigneeIds\":[%s]}".formatted(code, dw, assignee)).andExpect(status().isCreated());
+        json(post("/api/tasks"), owner, "{\"code\":\"%s\",\"title\":\"Task %s\",\"brandId\":%d,\"assigneeIds\":[%s]}".formatted(code, code, dw, assignee)).andExpect(status().isCreated());
         return code;
     }
 

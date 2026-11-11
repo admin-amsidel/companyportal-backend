@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -351,7 +351,8 @@ public class TravelService {
         Employee self = person(me.id());
         Long brandId = self.getBrand() == null ? null : self.getBrand().getId();
         String query = q == null ? "" : q.strip().toLowerCase(Locale.ROOT);
-        String digits = query.replaceAll("\\D", "");
+        // a phone number only when nothing but digits was typed: "CU0007" is a code, and "0007" stays 0007
+        String digits = query.matches("[\\d\\s+\\-().]+") ? query.replaceAll("\\D", "") : "";
         return customers.forBrand(brandId).stream()
                 .filter(Customer::isActive)
                 .filter(x -> query.isEmpty() || x.getName().toLowerCase(Locale.ROOT).contains(query)

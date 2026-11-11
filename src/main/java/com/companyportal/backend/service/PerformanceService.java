@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -657,6 +657,33 @@ public class PerformanceService {
      * After a work log task is saved: the task worklog goals (in open cycles) of the people it is assigned to, and
      * of those just taken off it, follow their tasks.
      */
+    /**
+     * A work log task is being deleted (test data): its sub-tasks leave every goal, and the goals' shares and ratings
+     * are worked out again from what is left. Returns how many sub-tasks went.
+     */
+    @Transactional
+    public int taskDeleted(Long workTaskId) {
+        int removed = 0;
+        for (Goal g : goalRepository.withWorkTask(workTaskId)) {
+            int before = g.getTasks().size();
+            g.getTasks().removeIf(t -> t.getWorkTask() != null && t.getWorkTask().getId().equals(workTaskId));
+            removed += before - g.getTasks().size();
+            for (int i = 0; i < g.getTasks().size(); i++) {
+                g.getTasks().get(i).setSortOrder(i);
+            }
+            rollUp(g);
+        }
+        return removed;
+    }
+
+    /** How many goal sub-tasks follow this work log task (what deleting it would remove). */
+    @Transactional(readOnly = true)
+    public int goalItemsFor(Long workTaskId) {
+        return (int) goalRepository.withWorkTask(workTaskId).stream()
+                .flatMap(g -> g.getTasks().stream())
+                .filter(t -> t.getWorkTask() != null && t.getWorkTask().getId().equals(workTaskId)).count();
+    }
+
     @Transactional
     public void tasksChanged(Collection<Long> employeeIds) {
         if (employeeIds.isEmpty()) {

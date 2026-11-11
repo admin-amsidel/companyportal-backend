@@ -12,10 +12,13 @@ FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
 EXPOSE 8080
-# Memory for a small (512 MB) cloud instance. The heap is only part of what Java uses: classes (metaspace), thread
-# stacks and buffers come on top, and at 75% heap they went over 512 MB under load, so the instance was killed (502s
-# until Render restarted it). So: heap 55%, ceilings on metaspace and compiled code, smaller thread stacks, the serial collector
-# (least memory on 1 CPU), and on running out of memory exit at once, so Render restarts a clean copy instead of a
-# half-working one answering slowly. JAVA_OPTS adds to or overrides these (e.g. -XX:MaxRAMPercentage=70 on 2 GB).
+# Memory and garbage collector for Render Pro (2 CPU, 4 GB). The heap is only part of what Java uses: classes
+# (metaspace), thread stacks (100 web threads) and buffers come on top, so the heap gets 70% and the rest has ceilings.
+# G1 suits 2+ CPUs and a few GB (short pauses while people wait); on running out of memory exit at once, so Render
+# restarts a clean copy instead of a half-working one answering slowly.
+# JVM_OPTS replaces these on Render without a rebuild; for a small instance (512 MB, 1 CPU) use:
+#   -XX:MaxRAMPercentage=55 -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=64m -Xss512k -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError
+# (with TOMCAT_THREADS=40 and DB_POOL_SIZE=10). JAVA_OPTS adds further options after these.
+ENV JVM_OPTS="-XX:MaxRAMPercentage=70 -XX:MaxMetaspaceSize=256m -XX:ReservedCodeCacheSize=128m -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -XX:+ExitOnOutOfMemoryError"
 ENV JAVA_OPTS=""
-ENTRYPOINT ["sh", "-c", "exec java -XX:MaxRAMPercentage=55 -XX:MaxMetaspaceSize=192m -XX:ReservedCodeCacheSize=64m -Xss512k -XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError $JAVA_OPTS -jar app.jar"]
+ENTRYPOINT ["sh", "-c", "exec java $JVM_OPTS $JAVA_OPTS -jar app.jar"]

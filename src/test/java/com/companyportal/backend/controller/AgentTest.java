@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.controller;
 
@@ -147,6 +147,25 @@ class AgentTest {
         String adder = staff("13201", "13203")[1];
         json(post("/api/agents"), adder, agentJson(ob, "Elsewhere")).andExpect(status().isForbidden());
         mockMvc.perform(get("/api/agents").param("brandId", String.valueOf(ob)).header("Authorization", auth(adder))).andExpect(status().isForbidden());
+    }
+
+    @Test
+    void bankDetailsGoTogetherAndAreChecked() throws Exception {
+        String base = "{\"brandId\":%d,\"name\":\"Bank %s\",\"phone\":\"9847011111\"%s}";
+        String id = idOf(json(post("/api/agents"), owner, base.formatted(dw, "1", ",\"bankAccount\":\"50100123456789\",\"ifsc\":\"hdfc0001234\""))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.bankAccount").value("50100123456789"))
+                .andExpect(jsonPath("$.ifsc").value("HDFC0001234")));
+        // one without the other, or in the wrong shape: refused
+        json(post("/api/agents"), owner, base.formatted(dw, "2", ",\"bankAccount\":\"50100123456789\"")).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Give the IFSC too, or leave out the bank account number"));
+        json(post("/api/agents"), owner, base.formatted(dw, "3", ",\"ifsc\":\"HDFC0001234\"")).andExpect(status().isBadRequest());
+        json(post("/api/agents"), owner, base.formatted(dw, "4", ",\"bankAccount\":\"12AB\",\"ifsc\":\"HDFC0001234\"")).andExpect(status().isBadRequest());
+        json(post("/api/agents"), owner, base.formatted(dw, "5", ",\"bankAccount\":\"50100123456789\",\"ifsc\":\"HDFC1234\"")).andExpect(status().isBadRequest());
+        // optional: none at all is fine, and they can be taken off again
+        json(post("/api/agents"), owner, base.formatted(dw, "6", "")).andExpect(status().isCreated()).andExpect(jsonPath("$.bankAccount").doesNotExist());
+        json(put("/api/agents/" + id), owner, base.formatted(dw, "1", ",\"bankAccount\":\"\",\"ifsc\":\"\"")).andExpect(status().isOk())
+                .andExpect(jsonPath("$.bankAccount").doesNotExist()).andExpect(jsonPath("$.ifsc").doesNotExist());
     }
 
     @Test

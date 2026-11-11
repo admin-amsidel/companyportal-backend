@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2026 AMSIDEL Technologies. All rights reserved.
- * Designed and developed by AMSIDEL Technologies.
+ * Copyright (c) 2026 IANEL Technologies. All rights reserved.
+ * Designed and developed by IANEL Technologies.
  */
 package com.companyportal.backend.service;
 
@@ -188,7 +188,8 @@ public class StorageService {
             Long used = jdbc.queryForObject("select pg_database_size(current_database())", Long.class);
             s.setDatabaseBytes(used == null ? 0 : used);
             s.setDatabaseAvailable(true);
-            tables = jdbc.query("select relname, pg_total_relation_size(relid) as bytes, n_live_tup from pg_stat_user_tables order by 2 desc limit 10",
+            tables = jdbc.query("select relname, pg_total_relation_size(relid) as bytes, n_live_tup from pg_stat_user_tables"
+                            + " where schemaname = current_schema() order by 2 desc limit 10",
                     (rs, i) -> new TableSize(rs.getString(1), rs.getLong(2), rs.getLong(3)));
         } catch (RuntimeException e) {
             log.debug("The database's size is not available: {}", e.getMessage());
