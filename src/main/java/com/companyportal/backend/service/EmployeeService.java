@@ -444,12 +444,20 @@ public class EmployeeService {
         return candidate;
     }
 
-    private void checkCanManage(AuthUser me, Employee target) {
+    /**
+     * May {@code me} change this employee's record? A plain answer, never an exception: a caller inside a transaction
+     * must not catch one thrown through a @Transactional method, which marks that transaction for rollback (a 500).
+     */
+    public boolean canManage(AuthUser me, Employee target) {
         if (me.isOwner()) {
-            return;
+            return true;
         }
         boolean staff = target.getRole() == Role.MANAGER || target.getRole() == Role.EMPLOYEE;
-        if (!staff || !inScope(me, brandIdOf(target))) {
+        return staff && inScope(me, brandIdOf(target));
+    }
+
+    private void checkCanManage(AuthUser me, Employee target) {
+        if (!canManage(me, target)) {
             throw ApiException.forbidden("You are not allowed to change this employee");
         }
     }

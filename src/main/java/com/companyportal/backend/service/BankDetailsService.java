@@ -31,7 +31,7 @@ public class BankDetailsService {
     @Transactional(readOnly = true)
     public BankDetails.View get(AuthUser me, Long employeeId) {
         Employee e = employeeService.findVisible(me, employeeId);
-        boolean manages = manages(me, employeeId);
+        boolean manages = manages(me, e);
         boolean payroll = menuAccess.can(me, Menus.PAYROLL_SALARIES) && payrollAccess.visible(me, employeeId) != null;
         if (!me.id().equals(employeeId) && !manages && !payroll) {
             throw ApiException.forbidden("Only the person, their admins and payroll see bank details");
@@ -50,16 +50,15 @@ public class BankDetailsService {
         return BankDetails.View.of(e, true);
     }
 
-    private boolean manages(AuthUser me, Long employeeId) {
+    /**
+     * Not by catching findManageable's refusal: thrown through its @Transactional proxy, it marks this read for rollback
+     * and the request ends in a 500 (an admin opening their own, or another admin's, bank details).
+     */
+    private boolean manages(AuthUser me, Employee e) {
         if (!me.isOwner() && me.role() != com.companyportal.backend.entity.Role.ADMIN) {
             return false;
         }
-        try {
-            employeeService.findManageable(me, employeeId);
-            return true;
-        } catch (ApiException e) {
-            return false;
-        }
+        return employeeService.canManage(me, e);
     }
 
     private static String clean(String s, boolean upper) {

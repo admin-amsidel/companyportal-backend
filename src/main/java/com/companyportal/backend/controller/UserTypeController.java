@@ -12,7 +12,10 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/** User types (portal access): read by everyone signed in; added, changed and deleted by owners and admins (SecurityConfig). */
+/**
+ * User types (portal access). Read by the pages that use the list: Portal access roles, Menu access and the employee form
+ * (All employees); added, changed and deleted by owners and admins with Portal access roles (SecurityConfig).
+ */
 @RestController
 @RequestMapping("/api/user-types")
 @RequiredArgsConstructor
@@ -20,6 +23,9 @@ public class UserTypeController {
 
     private final UserTypeService service;
 
+    /** Not for everyone signed in (ACC-01): only those whose pages need the list. */
+    @com.companyportal.backend.security.Checkpoint({com.companyportal.backend.security.Menus.USER_TYPES,
+            com.companyportal.backend.security.Menus.MENU_ACCESS, com.companyportal.backend.security.Menus.EMP_LIST})
     @GetMapping
     public List<UserTypeService.View> list() {
         return service.list();

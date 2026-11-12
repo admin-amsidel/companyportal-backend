@@ -287,6 +287,13 @@ class PayslipTest {
         mockMvc.perform(get("/api/employees/" + a[0] + "/bank-details").header("Authorization", auth(b[1])))
                 .andExpect(status().isForbidden());
         json(put("/api/employees/" + a[0] + "/bank-details"), a[1], "{\"upi\":\"x@ok\"}").andExpect(status().isForbidden());
+        // an admin opening their own, and another admin's: admins do not manage admins, which once ended in a 500
+        String[] adm = employee("2025-04-01", "ADMIN");
+        String[] adm2 = employee("2025-04-01", "ADMIN");
+        mockMvc.perform(get("/api/auth/me/bank-details").header("Authorization", auth(adm[1])))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.canEdit").value(false));
+        mockMvc.perform(get("/api/employees/" + adm2[0] + "/bank-details").header("Authorization", auth(adm[1])))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.canEdit").value(false));
         // the payroll salary page shows the same details
         mockMvc.perform(get("/api/payroll/salaries/" + a[0]).param("fy", "2025").header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.employee.upi").value("slip@oksbi"));
@@ -408,11 +415,15 @@ class PayslipTest {
 
     /** {id, token} of a new employee of DW. */
     private String[] employee(String joined) throws Exception {
+        return employee(joined, "EMPLOYEE");
+    }
+
+    private String[] employee(String joined, String role) throws Exception {
         String userId = "ps.emp" + (++seq);
         String json = """
-                {"name":"Slip %d","userId":"%s","password":"ab@123","role":"EMPLOYEE","brandId":%d,
+                {"name":"Slip %d","userId":"%s","password":"ab@123","role":"%s","brandId":%d,
                  "phone":"+91 98470 00000","joinedDate":"%s"}
-                """.formatted(seq, userId, dw, joined);
+                """.formatted(seq, userId, role, dw, joined);
         String id = String.valueOf((Object) JsonPath.read(body(mockMvc.perform(post("/api/employees").header("Authorization", auth(owner))
                 .contentType(MediaType.APPLICATION_JSON).content(json)).andExpect(status().isCreated())), "$.id"));
         return new String[]{id, token(changePin(token(login(userId, "ab@123")), "ab@123", "cd@456"))};

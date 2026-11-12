@@ -77,6 +77,8 @@ class UserTypeTest {
                 .andExpect(jsonPath("$.codes", not(hasItem("ATT_CHECKIN"))));
         // not for staff to change
         json(post("/api/user-types"), anu, "{\"name\":\"Boss\",\"baseRole\":\"ADMIN\"}").andExpect(status().isForbidden());
+        // nor to read: the list is for Portal access roles, Menu access and All employees (ACC-01)
+        mockMvc.perform(get("/api/user-types").header("Authorization", auth(anu))).andExpect(status().isForbidden());
 
         // in use: not deleted; the built-in ones never
         mockMvc.perform(delete("/api/user-types/" + accId).header("Authorization", auth(owner)))

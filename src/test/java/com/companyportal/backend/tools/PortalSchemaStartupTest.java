@@ -84,6 +84,23 @@ class PortalSchemaStartupTest {
         mockMvc.perform(get("/api/employees").header("Authorization", owner)).andExpect(status().isOk());
         mockMvc.perform(get("/api/storage/summary").header("Authorization", owner)).andExpect(status().isOk());
         mockMvc.perform(get("/api/people/org-chart").header("Authorization", owner)).andExpect(status().is2xxSuccessful());
+        mockMvc.perform(get("/api/people/me/line").header("Authorization", owner)).andExpect(status().isOk());
+        // an admin under the owner: their own reporting line (the recursive query) and bank details
+        String ownerId = String.valueOf((Object) JsonPath.read(mockMvc.perform(get("/api/auth/me").header("Authorization", owner))
+                .andReturn().getResponse().getContentAsString(), "$.id"));
+        String brandId = String.valueOf((Object) JsonPath.read(mockMvc.perform(get("/api/brands").header("Authorization", owner))
+                .andReturn().getResponse().getContentAsString(), "$[0].id"));
+        mockMvc.perform(post("/api/employees").header("Authorization", owner).contentType(MediaType.APPLICATION_JSON).content("""
+                        {"name":"Admin Two","userId":"pg.admin","password":"ab@123","role":"ADMIN","brandId":%s,"reportsToId":%s,
+                         "phone":"+91 98470 00000","joinedDate":"2026-01-05"}""".formatted(brandId, ownerId)))
+                .andExpect(status().isCreated());
+        String first = JsonPath.read(mockMvc.perform(post("/api/auth/login").contentType(MediaType.APPLICATION_JSON)
+                .content("{\"userId\":\"pg.admin\",\"password\":\"ab@123\"}")).andReturn().getResponse().getContentAsString(), "$.token");
+        String admin = "asd " + JsonPath.read(mockMvc.perform(post("/api/auth/change-password").header("Authorization", "asd " + first)
+                .contentType(MediaType.APPLICATION_JSON).content("{\"currentPassword\":\"ab@123\",\"newPassword\":\"cd@456\"}"))
+                .andReturn().getResponse().getContentAsString(), "$.token");
+        mockMvc.perform(get("/api/people/me/line").header("Authorization", admin)).andExpect(status().isOk());
+        mockMvc.perform(get("/api/auth/me/bank-details").header("Authorization", admin)).andExpect(status().isOk());
 
         assertThat(jdbc.queryForObject("select current_schema()", String.class)).isEqualTo("portal");
         assertThat(jdbc.queryForObject("select count(*) from pg_tables where schemaname = 'portal' and tablename in ('employees', 'flyway_schema_history')", Integer.class))
