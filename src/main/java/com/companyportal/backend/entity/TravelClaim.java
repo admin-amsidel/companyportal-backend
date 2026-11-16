@@ -85,12 +85,19 @@ public class TravelClaim {
     @Column(precision = 10, scale = 2)
     private BigDecimal distanceKm;
 
-    /** GPS trips: the shortest and the longest route through the stops in their order. */
+    /** GPS trips: the shortest and the longest route through the stops in their order (worked out again when a stop is moved). */
     @Column(precision = 10, scale = 2)
     private BigDecimal shortestKm;
 
     @Column(precision = 10, scale = 2)
     private BigDecimal longestKm;
+
+    /** GPS trips: the shortest and longest route as tracked when the trip was completed; kept as they were, even when stops are moved later. */
+    @Column(precision = 10, scale = 2)
+    private BigDecimal gpsShortestKm;
+
+    @Column(precision = 10, scale = 2)
+    private BigDecimal gpsLongestKm;
 
     /** GOOGLE (Google Maps routes) or STRAIGHT_LINE (estimated from the GPS points). */
     @Column(length = 20)

@@ -33,10 +33,19 @@ public record LeaveRequestResponse(
         Instant decidedAt,
         String decisionNote,
         LocalDateTime createdAt,
-        BigDecimal available) {
+        BigDecimal available,
+        String revokedByName,
+        Instant revokedAt,
+        String revokeNote,
+        boolean canRevoke) {
 
     /** Call inside a transaction: reads the employee, type and approver. */
     public static LeaveRequestResponse from(LeaveRequest r, BigDecimal available) {
+        return from(r, available, false);
+    }
+
+    /** canRevoke: the one asking may revoke this leave now. */
+    public static LeaveRequestResponse from(LeaveRequest r, BigDecimal available, boolean canRevoke) {
         Employee e = r.getEmployee();
         return new LeaveRequestResponse(
                 r.getId(),
@@ -57,6 +66,10 @@ public record LeaveRequestResponse(
                 r.getDecidedAt(),
                 r.getDecisionNote(),
                 r.getCreatedAt(),
-                available);
+                available,
+                r.getRevokedBy() == null ? null : r.getRevokedBy().getName(),
+                r.getRevokedAt(),
+                r.getRevokeNote(),
+                canRevoke);
     }
 }

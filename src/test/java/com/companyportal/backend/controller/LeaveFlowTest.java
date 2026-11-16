@@ -20,6 +20,7 @@ import org.springframework.test.web.servlet.ResultActions;
 import java.util.List;
 import java.util.Map;
 
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.startsWith;
@@ -274,6 +275,43 @@ class LeaveFlowTest {
     }
 
     @Test
+    void ownersRevokeApprovedLeaveThatHasNotStartedAndTheDaysComeBack() throws Exception {
+        String[] emp = person("EMPLOYEE");
+        String id = idOf(apply(emp[1], "CL", "2027-08-02", "2027-08-03", false));
+        // pending leave is rejected, not revoked
+        revoke(owner, id, "{\"note\":\"Plans changed\"}").andExpect(status().isConflict());
+        mockMvc.perform(post("/api/leave/requests/" + id + "/approve").header("Authorization", auth(manager)))
+                .andExpect(status().isOk());
+        balance(emp[1], "CL", "used", 2.0);
+        balance(emp[1], "CL", "available", 8.0);
+
+        // only owners and admins: not the manager who approved it, nor the person (they cancel from My leave)
+        mockMvc.perform(get("/api/leave/requests?status=APPROVED").header("Authorization", auth(manager)))
+                .andExpect(jsonPath("$[?(@.id == " + id + ")].canRevoke", contains(false)));
+        mockMvc.perform(get("/api/leave/requests?status=APPROVED").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$[?(@.id == " + id + ")].canRevoke", contains(true)));
+        revoke(manager, id, "{\"note\":\"Plans changed\"}").andExpect(status().isForbidden());
+        revoke(emp[1], id, "{\"note\":\"Plans changed\"}").andExpect(status().isForbidden());
+        // a reason is needed
+        revoke(owner, id, "{}").andExpect(status().isBadRequest());
+
+        revoke(owner, id, "{\"note\":\"Family emergency, trip called off\"}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.status").value("REVOKED"))
+                .andExpect(jsonPath("$.revokeNote").value("Family emergency, trip called off"))
+                .andExpect(jsonPath("$.revokedByName").isNotEmpty())
+                .andExpect(jsonPath("$.decidedByName").isNotEmpty());
+        // the days are back, and the person sees why
+        balance(emp[1], "CL", "used", 0.0);
+        balance(emp[1], "CL", "available", 10.0);
+        mockMvc.perform(get("/api/leave/me/requests").header("Authorization", auth(emp[1])))
+                .andExpect(jsonPath("$[?(@.id == " + id + ")].status", contains("REVOKED")));
+        // once only; the dates are free to apply for again
+        revoke(owner, id, "{\"note\":\"Again\"}").andExpect(status().isConflict());
+        apply(emp[1], "CL", "2027-08-02", "2027-08-03", false).andExpect(status().isCreated());
+    }
+
+    @Test
     void onlyOwnersAndAdminsChangeAllowances() throws Exception {
         String body = """
                 {"code":"EL","name":"Earned Leave","allocation":"ANNUAL","annualQuota":12,"halfDayAllowed":false}
@@ -311,6 +349,11 @@ class LeaveFlowTest {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"leaveTypeId\":%d,\"fromDate\":\"%s\",\"toDate\":\"%s\",\"halfDay\":%s}"
                         .formatted(typeIds.get(code), from, to, halfDay)));
+    }
+
+    private ResultActions revoke(String token, String id, String json) throws Exception {
+        return mockMvc.perform(post("/api/leave/requests/" + id + "/revoke").header("Authorization", auth(token))
+                .contentType(MediaType.APPLICATION_JSON).content(json));
     }
 
     private void balance(String token, String code, String field, double expected) throws Exception {

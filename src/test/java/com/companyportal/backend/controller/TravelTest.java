@@ -23,6 +23,7 @@ import java.time.ZoneId;
 import java.util.List;
 
 import static org.hamcrest.Matchers.closeTo;
+import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.hasItem;
 import static org.hamcrest.Matchers.not;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
@@ -104,6 +105,12 @@ class TravelTest {
         json(put("/api/travel/claims/" + id + "/decision"), boss[1], "{\"approve\":true,\"approvedAmount\":600,\"remarks\":\"Food limit is 70\"}")
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("APPROVED")).andExpect(jsonPath("$.approvedAmount").value(600.0))
                 .andExpect(jsonPath("$.decisionRemarks").value("Food limit is 70"));
+        // the decision is final: an approved claim cannot be rejected or decided again, and is no longer offered for review
+        json(put("/api/travel/claims/" + id + "/decision"), boss[1], "{\"approve\":false,\"remarks\":\"Changed my mind\"}").andExpect(status().isConflict());
+        json(put("/api/travel/claims/" + id + "/decision"), boss[1], "{\"approve\":true}").andExpect(status().isConflict());
+        mockMvc.perform(get("/api/travel/team").header("Authorization", auth(boss[1])))
+                .andExpect(jsonPath("$.claims[?(@.id == " + id + ")].canDecide", contains(false)))
+                .andExpect(jsonPath("$.claims[?(@.id == " + id + ")].status", contains("APPROVED")));
 
         // waiting, then settled
         json(put("/api/travel/claims/" + id + "/waiting"), boss[1], "{}").andExpect(status().isOk()).andExpect(jsonPath("$.status").value("WAITING_SETTLEMENT"));
@@ -138,12 +145,20 @@ class TravelTest {
         // no future meetings; someone else's approver cannot decide; settling needs its tick
         json(post("/api/travel/claims"), noGps[1], manual(noGps[1], "10", "0").replace(TODAY.toString(), TODAY.plusDays(2).toString()))
                 .andExpect(status().isBadRequest());
+        // no meeting date: refused, never quietly dated today
+        json(post("/api/travel/claims"), noGps[1], manual(noGps[1], "10", "0").replace("\"meetingDate\":\"" + TODAY + "\",", ""))
+                .andExpect(status().isBadRequest()).andExpect(jsonPath("$.details.meetingDate").value("Give the meeting date"));
         int id = JsonPath.read(body(json(post("/api/travel/claims"), noGps[1], manual(noGps[1], "10", "0")).andExpect(status().isCreated())), "$.id");
         String[] stranger = person("null", "5201", "5202");
         json(put("/api/travel/claims/" + id + "/decision"), stranger[1], "{\"approve\":true}").andExpect(status().isForbidden());
         // nobody to ask: the owner decides; rejecting needs a reason
         json(put("/api/travel/claims/" + id + "/decision"), owner, "{\"approve\":false}").andExpect(status().isBadRequest());
         json(put("/api/travel/claims/" + id + "/decision"), owner, "{\"approve\":true}").andExpect(status().isOk()).andExpect(jsonPath("$.approvedAmount").value(120.0));
+        // a rejected claim stays rejected
+        int rejected = JsonPath.read(body(json(post("/api/travel/claims"), noGps[1], manual(noGps[1], "10", "0")).andExpect(status().isCreated())), "$.id");
+        json(put("/api/travel/claims/" + rejected + "/decision"), owner, "{\"approve\":false,\"remarks\":\"No meeting that day\"}")
+                .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED")).andExpect(jsonPath("$.canDecide").value(false));
+        json(put("/api/travel/claims/" + rejected + "/decision"), owner, "{\"approve\":true}").andExpect(status().isConflict());
         json(put("/api/travel/claims/" + id + "/settlement"), stranger[1], """
                 {"transactionId":"X1","paymentDate":"%s","paymentAmount":120}
                 """.formatted(TODAY)).andExpect(status().isForbidden());
@@ -182,8 +197,13 @@ class TravelTest {
         rate(editor[0], "10");
         int trip = JsonPath.read(body(json(post("/api/travel/trips"), editor[1], start())), "$.id");
         json(post("/api/travel/trips/" + trip + "/complete"), editor[1], "{\"fix\":{\"latitude\":10.05,\"longitude\":76.3}}").andExpect(status().isOk());
-        json(post("/api/travel/trips/" + trip + "/confirm"), editor[1], "{\"distanceKm\":14,\"toLocation\":\"Kalamassery\",\"meetingPoint\":\"Plant\"}")
-                .andExpect(status().isOk()).andExpect(jsonPath("$.distanceChanged").value(true)).andExpect(jsonPath("$.claimedAmount").value(140.0));
+        json(post("/api/travel/trips/" + trip + "/confirm"), editor[1],
+                        "{\"distanceKm\":14,\"toLocation\":\"Kalamassery\",\"meetingPoint\":\"Plant\",\"notes\":\"Met the plant head\"}")
+                .andExpect(status().isOk()).andExpect(jsonPath("$.distanceChanged").value(true)).andExpect(jsonPath("$.claimedAmount").value(140.0))
+                // the person's figure and the GPS figures are all kept, like a manual entry's details
+                .andExpect(jsonPath("$.distanceKm").value(14.0))
+                .andExpect(jsonPath("$.gpsShortestKm", closeTo(5.56, 0.05))).andExpect(jsonPath("$.gpsLongestKm", closeTo(7.78, 0.1)))
+                .andExpect(jsonPath("$.notes").value("Met the plant head"));
         // an undecided claim may still be deleted
         mockMvc.perform(delete("/api/travel/claims/" + trip).header("Authorization", auth(editor[1]))).andExpect(status().isNoContent());
     }
@@ -206,12 +226,15 @@ class TravelTest {
         json(put("/api/travel/claims/" + id + "/stops/2"), me[1], "{\"latitude\":10.05,\"longitude\":76.3,\"label\":\"Site gate\"}")
                 .andExpect(status().isOk()).andExpect(jsonPath("$.shortestKm", closeTo(11.12, 0.05))).andExpect(jsonPath("$.distanceKm", closeTo(11.12, 0.05)))
                 .andExpect(jsonPath("$.stops[1].label").value("Site gate")).andExpect(jsonPath("$.stops[1].originalLatitude").value(10.1))
-                .andExpect(jsonPath("$.stops[1].editedByName").isNotEmpty()).andExpect(jsonPath("$.canEditStops").value(true));
+                .andExpect(jsonPath("$.stops[1].editedByName").isNotEmpty()).andExpect(jsonPath("$.canEditStops").value(true))
+                // what GPS tracked stays as it was
+                .andExpect(jsonPath("$.gpsShortestKm", closeTo(22.24, 0.05))).andExpect(jsonPath("$.gpsLongestKm", closeTo(31.13, 0.1)));
         double km = JsonPath.read(body(mockMvc.perform(get("/api/travel/me").header("Authorization", auth(me[1])))), "$.openTrip.distanceKm");
         json(post("/api/travel/trips/" + id + "/confirm"), me[1], "{\"distanceKm\":%s,\"toLocation\":\"Site\",\"meetingPoint\":\"Site\"}".formatted(km)).andExpect(status().isOk());
         // the approver moves it back while it waits; the amount follows
         json(put("/api/travel/claims/" + id + "/stops/2"), boss[1], "{\"latitude\":10.1,\"longitude\":76.3}")
-                .andExpect(status().isOk()).andExpect(jsonPath("$.claimedAmount", closeTo(222.4, 0.6))).andExpect(jsonPath("$.stops[1].originalLatitude").value(10.1));
+                .andExpect(status().isOk()).andExpect(jsonPath("$.claimedAmount", closeTo(222.4, 0.6))).andExpect(jsonPath("$.stops[1].originalLatitude").value(10.1))
+                .andExpect(jsonPath("$.gpsShortestKm", closeTo(22.24, 0.05)));
         // once decided, no more
         json(put("/api/travel/claims/" + id + "/decision"), boss[1], "{\"approve\":true}").andExpect(status().isOk());
         json(put("/api/travel/claims/" + id + "/stops/2"), boss[1], "{\"latitude\":10.2,\"longitude\":76.3}").andExpect(status().isForbidden());

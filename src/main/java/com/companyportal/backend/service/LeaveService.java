@@ -212,9 +212,37 @@ public class LeaveService {
                         left = available.computeIfAbsent(r.getEmployee().getId() + ":" + r.getLeaveType().getId() + ":" + r.getFromDate(),
                                 k -> Optional.ofNullable(balanceAt(r.getEmployee(), r.getLeaveType(), r.getFromDate())).map(LeaveBalance::available).orElse(null));
                     }
-                    return LeaveRequestResponse.from(r, left);
+                    return LeaveRequestResponse.from(r, left, canRevoke(me, r));
                 })
                 .toList();
+    }
+
+    /**
+     * An owner, or an admin in the person's scope, takes back approved leave that has not started (the person's plans
+     * changed): it becomes REVOKED, which no balance counts, so the days go back to what the person has left.
+     */
+    @Transactional
+    public LeaveRequestResponse revoke(AuthUser me, Long id, String note) {
+        LeaveRequest leave = request(id);
+        if (!canRevokeFor(me, leave.getEmployee())) {
+            throw ApiException.forbidden(leave.getEmployee().getId().equals(me.id())
+                    ? "Cancel your own leave from My leave" : "Only an owner, or an admin of " + leave.getEmployee().getName() + "'s brand, can revoke leave");
+        }
+        if (leave.getStatus() != LeaveStatus.APPROVED) {
+            throw ApiException.conflict("Only approved leave can be revoked; this request is " + leave.getStatus().name().toLowerCase(Locale.ROOT));
+        }
+        if (!leave.getFromDate().isAfter(today())) {
+            throw ApiException.conflict("This leave has already started, so it cannot be revoked");
+        }
+        String trimmed = trimToNull(note);
+        if (trimmed == null) {
+            throw ApiException.badRequest("Say why the leave is revoked");
+        }
+        leave.setStatus(LeaveStatus.REVOKED);
+        leave.setRevokedBy(employee(me.id()));
+        leave.setRevokedAt(Instant.now());
+        leave.setRevokeNote(trimmed);
+        return LeaveRequestResponse.from(leave, null);
     }
 
     @Transactional
@@ -316,6 +344,21 @@ public class LeaveService {
         Long brandId = target.getBrand() == null ? null : target.getBrand().getId();
         boolean staff = target.getRole() == Role.MANAGER || target.getRole() == Role.EMPLOYEE;
         return me.isOwner() || (me.role() == Role.ADMIN && staff && (me.brandId() == null || me.brandId().equals(brandId)));
+    }
+
+    /** Owners, and admins over the person's brand; never one's own leave (that is cancelled from My leave). */
+    static boolean canRevokeFor(AuthUser me, Employee target) {
+        if (me.id().equals(target.getId())) {
+            return false;
+        }
+        Long brandId = target.getBrand() == null ? null : target.getBrand().getId();
+        boolean staff = target.getRole() == Role.MANAGER || target.getRole() == Role.EMPLOYEE;
+        return me.isOwner() || (me.role() == Role.ADMIN && staff && (me.brandId() == null || me.brandId().equals(brandId)));
+    }
+
+    /** Approved, not started yet, and {@code me} may revoke it. */
+    private boolean canRevoke(AuthUser me, LeaveRequest r) {
+        return r.getStatus() == LeaveStatus.APPROVED && r.getFromDate().isAfter(today()) && canRevokeFor(me, r.getEmployee());
     }
 
     /** Why this leave needs no decision; null when it goes to the reporting person. */

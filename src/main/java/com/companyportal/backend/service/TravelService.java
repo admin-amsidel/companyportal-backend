@@ -163,6 +163,9 @@ public class TravelService {
         c.setShortestKm(BigDecimal.valueOf(r.shortestKm()).setScale(2, RoundingMode.HALF_UP));
         c.setLongestKm(BigDecimal.valueOf(r.longestKm()).setScale(2, RoundingMode.HALF_UP));
         c.setDistanceSource(r.source());
+        // the GPS figures as tracked: kept even if a stop is moved later
+        c.setGpsShortestKm(c.getShortestKm());
+        c.setGpsLongestKm(c.getLongestKm());
         c.setDistanceKm(c.getShortestKm());
         if (c.getToLocation() == null) {
             c.setToLocation(clean(c.getMeetingPoint()));
@@ -192,7 +195,8 @@ public class TravelService {
         if (StringUtils.hasText(body.meetingPoint())) {
             c.setMeetingPoint(clean(body.meetingPoint()));
         }
-        if (StringUtils.hasText(body.notes())) {
+        // the confirm form shows the trip's notes to change, like a manual entry's; left out = keep them
+        if (body.notes() != null) {
             c.setNotes(clean(body.notes()));
         }
         if (c.getToLocation() == null || c.getMeetingPoint() == null) {
@@ -231,12 +235,18 @@ public class TravelService {
     @Transactional
     public ClaimView decide(AuthUser me, Long id, DecideBody body) {
         TravelClaim c = found(id);
-        if (!canDecide(me, c)) {
+        if (!isApprover(me, c)) {
             throw ApiException.forbidden(c.getEmployee().getId().equals(me.id()) ? "You cannot approve your own claim"
                     : "Only " + c.getEmployee().getName() + "'s approver can decide this claim");
         }
-        if (c.getStatus() != Status.SUBMITTED && c.getStatus() != Status.APPROVED && c.getStatus() != Status.REJECTED) {
-            throw ApiException.conflict("This claim is already waiting for settlement or settled");
+        // a decision is final: approved stays approved, rejected stays rejected
+        if (c.getStatus() != Status.SUBMITTED) {
+            throw ApiException.conflict(switch (c.getStatus()) {
+                case APPROVED -> "This claim is already approved";
+                case REJECTED -> "This claim is already rejected";
+                case WAITING_SETTLEMENT, SETTLED -> "This claim is already waiting for settlement or settled";
+                default -> "This claim is not sent for approval yet";
+            });
         }
         String remarks = clean(body.remarks());
         if (body.approve()) {
@@ -467,9 +477,15 @@ public class TravelService {
         return brandId == 0 ? e.getBrand() == null : e.getBrand() != null && e.getBrand().getId().equals(brandId);
     }
 
+    /** Only a claim waiting for a decision can be decided; once approved or rejected, the decision is final. */
     private boolean canDecide(AuthUser me, TravelClaim c) {
+        return c.getStatus() == Status.SUBMITTED && isApprover(me, c);
+    }
+
+    /** The owner, or the person's approver; never the person themself. */
+    private boolean isApprover(AuthUser me, TravelClaim c) {
         Employee person = c.getEmployee();
-        if (person.getId().equals(me.id()) || !EnumSet.of(Status.SUBMITTED, Status.APPROVED, Status.REJECTED).contains(c.getStatus())) {
+        if (person.getId().equals(me.id())) {
             return false;
         }
         if (me.isOwner()) {
@@ -534,7 +550,7 @@ public class TravelService {
                 ManualSalesService.symbol(e.getBrand()), c.getMethod().name(), c.getStatus().name(),
                 c.getCustomer() == null ? null : c.getCustomer().getId(), c.getCustomer() == null ? null : c.getCustomer().getCode(), c.getCustomerName(), c.getMeetingDate(),
                 c.getFromLocation(), c.getToLocation(), c.getMeetingPoint(), c.getNotes(), c.getDistanceKm(), c.getShortestKm(), c.getLongestKm(),
-                c.getDistanceSource(), Boolean.TRUE.equals(c.getDistanceChanged()), c.getRatePerKm(), c.getTravelAmount(), c.getFoodExpense(),
+                c.getGpsShortestKm(), c.getGpsLongestKm(), c.getDistanceSource(), Boolean.TRUE.equals(c.getDistanceChanged()), c.getRatePerKm(), c.getTravelAmount(), c.getFoodExpense(),
                 c.getOtherExpense(), c.getClaimedAmount(), c.getSubmittedAt(), c.getApprovedAmount(), c.getDecisionRemarks(),
                 c.getDecidedBy() == null ? null : c.getDecidedBy().getName(), c.getDecidedAt(), c.getWaitingSince(), c.getTransactionId(),
                 c.getPaymentDate(), c.getPaymentAmount(), c.getSettlementRemarks(), c.getSettledBy() == null ? null : c.getSettledBy().getName(),

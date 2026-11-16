@@ -105,7 +105,7 @@ public final class TravelDtos {
     public record ClaimView(Long id, String code, Long employeeId, String employeeName, String empNumber, String brandCode, String currencySymbol,
                             String method, String status, Long customerId, String customerCode, String customerName, LocalDate meetingDate, String fromLocation, String toLocation,
                             String meetingPoint, String notes, BigDecimal distanceKm, BigDecimal shortestKm, BigDecimal longestKm,
-                            String distanceSource, boolean distanceChanged, BigDecimal ratePerKm, BigDecimal travelAmount, BigDecimal foodExpense,
+                            BigDecimal gpsShortestKm, BigDecimal gpsLongestKm, String distanceSource, boolean distanceChanged, BigDecimal ratePerKm, BigDecimal travelAmount, BigDecimal foodExpense,
                             BigDecimal otherExpense, BigDecimal claimedAmount, Instant submittedAt, BigDecimal approvedAmount, String decisionRemarks,
                             String decidedByName, Instant decidedAt, Instant waitingSince, String transactionId, LocalDate paymentDate,
                             BigDecimal paymentAmount, String settlementRemarks, String settledByName, Instant settledAt, List<StopView> stops,

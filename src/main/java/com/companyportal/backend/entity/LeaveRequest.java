@@ -71,6 +71,16 @@ public class LeaveRequest {
     @Column(length = 300)
     private String decisionNote;
 
+    /** Set when an owner or admin revoked approved leave; the approval above is kept. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "revoked_by")
+    private Employee revokedBy;
+
+    private Instant revokedAt;
+
+    @Column(length = 300)
+    private String revokeNote;
+
     @CreatedDate
     @Column(updatable = false)
     private LocalDateTime createdAt;

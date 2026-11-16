@@ -207,6 +207,14 @@ public class LeaveController {
         return leaveService.decide(me, id, false, request.getNote());
     }
 
+    /** Owners and admins: take back approved leave that has not started; the days go back to the balance. */
+    @Checkpoint({Menus.LEAVE_APPROVALS})
+    @PostMapping("/requests/{id}/revoke")
+    public LeaveRequestResponse revoke(@AuthenticationPrincipal AuthUser me, @PathVariable Long id,
+                                       @Valid @RequestBody LeaveDecisionRequest request) {
+        return leaveService.revoke(me, id, request.getNote());
+    }
+
     @Checkpoint({Menus.LEAVE_APPROVALS})
     @GetMapping("/team")
     public List<TeamMember> team(@AuthenticationPrincipal AuthUser me) {
