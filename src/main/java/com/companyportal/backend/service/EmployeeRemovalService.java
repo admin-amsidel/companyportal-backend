@@ -51,6 +51,8 @@ public class EmployeeRemovalService {
     private final EmployeeRepository employees;
     private final EmployeePhotoRepository photos;
     private final NotificationClearRepository notificationClears;
+    private final com.companyportal.backend.repository.EmployeeSkillRepository skills;
+    private final com.companyportal.backend.repository.EmployeeExperienceRepository experiences;
     private final MenuAccessService menuAccess;
     private final StoredFiles storedFiles;
     private final SignedInCache signedIn;
@@ -97,6 +99,9 @@ public class EmployeeRemovalService {
         }
         menuAccess.save(AccessSubject.EMPLOYEE, String.valueOf(id), List.of());
         notificationClears.deleteAllForEmployee(id);
+        // the skills on their profile are theirs alone, like the photo
+        skills.deleteAll(skills.ofEmployee(id));
+        experiences.deleteAll(experiences.ofEmployee(id));
         if (photos.existsById(id)) {
             photos.deleteById(id);
         }
