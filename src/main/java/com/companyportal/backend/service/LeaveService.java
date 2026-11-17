@@ -331,6 +331,30 @@ public class LeaveService {
         return LeaveGrantResponse.from(grantRepository.save(grant));
     }
 
+    /**
+     * Payroll: the person's approved unpaid leave (types with no limit) between two days, both included, counted as leave
+     * counts it: working days (no weekly offs or office holidays), a half day as 0.5.
+     */
+    @Transactional(readOnly = true)
+    public BigDecimal unpaidDays(Employee employee, LocalDate from, LocalDate to) {
+        BigDecimal total = BigDecimal.ZERO.setScale(1);
+        for (LeaveRequest r : requestRepository.overlapping(employee.getId(), List.of(LeaveStatus.APPROVED), from, to)) {
+            if (r.getLeaveType().getAllocation() != LeaveAllocation.UNLIMITED) {
+                continue;
+            }
+            if (r.isHalfDay()) {
+                total = total.add(HALF);
+                continue;
+            }
+            LocalDate start = r.getFromDate().isBefore(from) ? from : r.getFromDate();
+            LocalDate end = r.getToDate().isAfter(to) ? to : r.getToDate();
+            if (!start.isAfter(end)) {
+                total = total.add(workingDays(employee, start, end));
+            }
+        }
+        return total;
+    }
+
     // ---- rules ----
 
     /** The person they report to; owners, and admins in their scope, can step in. Never their own. */

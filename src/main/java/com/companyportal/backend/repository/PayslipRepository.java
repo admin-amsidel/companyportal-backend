@@ -27,6 +27,10 @@ public interface PayslipRepository extends JpaRepository<Payslip, Long> {
             + " order by p.periodYear, p.periodMonth")
     List<Payslip> ofEmployeeYear(@Param("employeeId") Long employeeId, @Param("fy") int fy);
 
+    /** Every payslip of a financial year (drafts too), with lines. */
+    @Query("select distinct p from Payslip p left join fetch p.lines where p.fyStartYear = :fy order by p.periodYear, p.periodMonth")
+    List<Payslip> ofYear(@Param("fy") int fy);
+
     boolean existsByEmployee_IdAndPeriodYearAndPeriodMonth(Long employeeId, int year, int month);
 
     /** Financial years in which this person has a published payslip. */

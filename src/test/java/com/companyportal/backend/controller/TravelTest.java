@@ -135,6 +135,41 @@ class TravelTest {
     }
 
     @Test
+    void aRepeatedTripIsRefusedAndClaimNumbersAreNeverReused() throws Exception {
+        String[] boss = person("null", "5201", "5202");
+        String[] me = person(boss[0], "5201", "5204");
+        rate(me[0], "10");
+        String first = body(json(post("/api/travel/claims"), me[1], manual(me[1], "5", "0")).andExpect(status().isCreated()));
+        String code = JsonPath.read(first, "$.code");
+        int id = JsonPath.read(first, "$.id");
+        // the number comes from the claim's own id
+        org.assertj.core.api.Assertions.assertThat(code).isEqualTo("TA-%04d".formatted(id));
+        // PORTAL-15: the same day and customer (another route), or the same day, route and km (another customer)
+        json(post("/api/travel/claims"), me[1], manual(me[1], "7", "0").replace("Kakkanad", "Aluva"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("You already claimed this trip: " + code + " (same day and customer)"));
+        json(post("/api/travel/claims"), me[1], manual(me[1], "5", "0").replace("Thomas Mathew", "Ravi Kumar"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.error").value("You already claimed this trip: " + code + " (same day, route and km)"));
+        // the customer's name in another case is the same customer; another customer and route is another trip
+        json(post("/api/travel/claims"), me[1], manual(me[1], "7", "0").replace("Thomas Mathew", "thomas mathew ").replace("Kakkanad", "Aluva"))
+                .andExpect(status().isConflict());
+        String other = body(json(post("/api/travel/claims"), me[1], manual(me[1], "7", "0").replace("Thomas Mathew", "Ravi Kumar")
+                .replace("Kakkanad", "Aluva")).andExpect(status().isCreated()));
+        // once rejected, the trip may be claimed again
+        json(put("/api/travel/claims/" + id + "/decision"), boss[1], "{\"approve\":false,\"remarks\":\"Wrong km\"}").andExpect(status().isOk());
+        String again = body(json(post("/api/travel/claims"), me[1], manual(me[1], "5", "0")).andExpect(status().isCreated()));
+        // a deleted claim's number is not given again
+        int otherId = JsonPath.read(other, "$.id");
+        String otherCode = JsonPath.read(other, "$.code");
+        mockMvc.perform(delete("/api/travel/claims/" + otherId).header("Authorization", auth(me[1]))).andExpect(status().isNoContent());
+        String next = body(json(post("/api/travel/claims"), me[1], manual(me[1], "9", "0").replace("Thomas Mathew", "Leela Menon")
+                .replace("Kakkanad", "Edappally")).andExpect(status().isCreated()));
+        org.assertj.core.api.Assertions.assertThat((String) JsonPath.read(next, "$.code"))
+                .isNotEqualTo(otherCode).isNotEqualTo(JsonPath.read(again, "$.code"));
+    }
+
+    @Test
     void theTicksDecideHowAClaimMayBeMade() throws Exception {
         String[] noManual = person("null", "5201", "5205");
         rate(noManual[0], "10");
@@ -154,8 +189,9 @@ class TravelTest {
         // nobody to ask: the owner decides; rejecting needs a reason
         json(put("/api/travel/claims/" + id + "/decision"), owner, "{\"approve\":false}").andExpect(status().isBadRequest());
         json(put("/api/travel/claims/" + id + "/decision"), owner, "{\"approve\":true}").andExpect(status().isOk()).andExpect(jsonPath("$.approvedAmount").value(120.0));
-        // a rejected claim stays rejected
-        int rejected = JsonPath.read(body(json(post("/api/travel/claims"), noGps[1], manual(noGps[1], "10", "0")).andExpect(status().isCreated())), "$.id");
+        // a rejected claim stays rejected (another trip the same day: another customer and route)
+        int rejected = JsonPath.read(body(json(post("/api/travel/claims"), noGps[1], manual(noGps[1], "10", "0")
+                .replace("Thomas Mathew", "Ravi Kumar").replace("Kakkanad", "Aluva")).andExpect(status().isCreated())), "$.id");
         json(put("/api/travel/claims/" + rejected + "/decision"), owner, "{\"approve\":false,\"remarks\":\"No meeting that day\"}")
                 .andExpect(status().isOk()).andExpect(jsonPath("$.status").value("REJECTED")).andExpect(jsonPath("$.canDecide").value(false));
         json(put("/api/travel/claims/" + rejected + "/decision"), owner, "{\"approve\":true}").andExpect(status().isConflict());
@@ -256,8 +292,8 @@ class TravelTest {
         json(post("/api/travel/claims"), me[1], manual(me[1], "5", "0").replace("\"customerName\":\"Thomas Mathew\"", "\"customerId\":" + customer + ",\"customerName\":\"lake\""))
                 .andExpect(status().isCreated()).andExpect(jsonPath("$.customerName").value("Lakeview Homes"))
                 .andExpect(jsonPath("$.customerId").value(customer)).andExpect(jsonPath("$.customerCode").isNotEmpty());
-        // not in the list: the name as typed
-        json(post("/api/travel/claims"), me[1], manual(me[1], "5", "0")).andExpect(status().isCreated())
+        // not in the list: the name as typed (another trip: not the same route and km as the one above)
+        json(post("/api/travel/claims"), me[1], manual(me[1], "6", "0")).andExpect(status().isCreated())
                 .andExpect(jsonPath("$.customerName").value("Thomas Mathew")).andExpect(jsonPath("$.customerId").doesNotExist());
         // another brand's customer cannot be picked
         int other = JsonPath.read(body(json(post("/api/brands"), owner, "{\"code\":\"TX\",\"name\":\"Travel Other\"}")), "$.id");

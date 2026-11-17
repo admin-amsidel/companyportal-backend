@@ -158,8 +158,8 @@ public class PayslipPdf {
                 + (p.employee().ifsc() == null ? "" : "\nIFSC " + p.employee().ifsc()));
         box(t, "Pay date", DATE.format(p.payDate()));
         box(t, "Working days", String.valueOf(p.workingDays()));
-        box(t, "Paid days", p.paidDays() + " of " + p.workingDays());
-        box(t, "Loss of pay days", String.valueOf(p.lopDays()));
+        box(t, "Paid days", days(p.paidDays()) + " of " + p.workingDays());
+        box(t, "Loss of pay days", days(p.lopDays()));
         box(t, "Credited on", p.paidOn() == null ? "Not yet" : DATE.format(p.paidOn()));
         box(t, "Paid by", p.paidOn() == null ? "-" : mode(p.paymentMode())
                 + (p.paymentRef() == null ? "" : "\nTxn ID " + p.paymentRef()));
@@ -318,6 +318,11 @@ public class PayslipPdf {
 
     private static String or(String s) {
         return s == null || s.isBlank() ? "-" : s;
+    }
+
+    /** 21, or 21.5 for half a day. */
+    private static String days(java.math.BigDecimal d) {
+        return d == null ? "0" : d.stripTrailingZeros().toPlainString();
     }
 
     /** 214945 -> "₹2,14,945.00" (Indian grouping: the last three digits, then twos). */

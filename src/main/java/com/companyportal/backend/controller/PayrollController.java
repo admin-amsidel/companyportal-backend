@@ -58,6 +58,20 @@ public class PayrollController {
         service.deleteComponent(id);
     }
 
+    // ---- professional tax slabs ----
+
+    @Checkpoint({Menus.PAYROLL_SALARIES, Menus.PAY_COMPONENTS})
+    @GetMapping("/professional-tax")
+    public List<PtSlabView> ptSlabs() {
+        return service.ptSlabs();
+    }
+
+    @Checkpoint({Menus.PAY_COMPONENTS})
+    @PutMapping("/professional-tax")
+    public List<PtSlabView> savePtSlabs(@Valid @RequestBody PayrollRequests.PtSlabs body) {
+        return service.savePtSlabs(body);
+    }
+
     // ---- salaries ----
 
     /** Everyone with their salary totals for the year (this financial year when fy is not given). */
@@ -66,16 +80,19 @@ public class PayrollController {
         return service.year(me, fy);
     }
 
-    /** The income tax under both regimes for a salary being typed (not saved). */
+    /** The year's income tax under both regimes with a salary revision being typed (not saved). */
     @PostMapping("/tax-preview")
-    public java.util.Map<String, com.companyportal.backend.service.IncomeTax.Calc> taxPreview(@RequestParam int fy,
+    public java.util.Map<String, com.companyportal.backend.service.IncomeTax.Calc> taxPreview(@AuthenticationPrincipal AuthUser me,
+                                                                                         @RequestParam int fy,
                                                                                          @Valid @RequestBody PayrollRequests.TaxPreview body) {
-        return service.taxPreview(fy, body);
+        return service.taxPreview(me, fy, body);
     }
 
+    /** One revision of the year's salary (revisionId), or the latest. */
     @GetMapping("/salaries/{employeeId}")
-    public SalaryView salary(@AuthenticationPrincipal AuthUser me, @PathVariable Long employeeId, @RequestParam int fy) {
-        return service.salary(me, employeeId, fy);
+    public SalaryView salary(@AuthenticationPrincipal AuthUser me, @PathVariable Long employeeId, @RequestParam int fy,
+                             @RequestParam(required = false) Long revisionId) {
+        return service.salary(me, employeeId, fy, revisionId);
     }
 
     @PutMapping("/salaries/{employeeId}")
@@ -84,9 +101,11 @@ public class PayrollController {
         return service.save(me, employeeId, fy, body);
     }
 
+    /** One revision (revisionId), or the whole year's salary. */
     @DeleteMapping("/salaries/{employeeId}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
-    public void delete(@AuthenticationPrincipal AuthUser me, @PathVariable Long employeeId, @RequestParam int fy) {
-        service.delete(me, employeeId, fy);
+    public void delete(@AuthenticationPrincipal AuthUser me, @PathVariable Long employeeId, @RequestParam int fy,
+                       @RequestParam(required = false) Long revisionId) {
+        service.delete(me, employeeId, fy, revisionId);
     }
 }

@@ -18,12 +18,13 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * One employee's salary for one financial year (April to March): the monthly amount of each pay component, from
- * effectiveFrom (the year's 1 April, or a later joining date). Yearly figures are worked out from it.
+ * One revision of an employee's salary in a financial year (April to March): the monthly amount of each pay component,
+ * from effectiveFrom until the day before the year's next revision (or the year's end, or the person's exit date). A
+ * year may have several (a raise in October). The year's income tax set-up is in PayrollTaxYear.
  */
 @Entity
 @Table(name = "salary_structures",
-        uniqueConstraints = @UniqueConstraint(name = "uk_salary_employee_year", columnNames = {"employee_id", "fy_start_year"}))
+        uniqueConstraints = @UniqueConstraint(name = "uk_salary_employee_from", columnNames = {"employee_id", "effective_from"}))
 @EntityListeners(AuditingEntityListener.class)
 @Getter
 @Setter
@@ -53,14 +54,21 @@ public class SalaryStructure {
     @Column(length = 500)
     private String notes;
 
-    /** How the income tax is set; null = MANUAL (salaries saved before regimes came). */
-    @Enumerated(EnumType.STRING)
-    @Column(length = 10)
-    private TaxRegime taxRegime;
+    /** EPF is worked out: 12% of the Basic + DA paid, on at most the wage ceiling unless pfFullWage. */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean pfApplies;
 
-    /** Old regime: deductions and exemptions declared for the year (80C, 80D, HRA, home-loan interest...). */
-    @Column(precision = 14, scale = 2)
-    private java.math.BigDecimal taxDeclared;
+    /** EPF on the whole Basic + DA, not capped at the wage ceiling. */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean pfFullWage;
+
+    /** ESI is worked out (0.75% of the gross paid) while the monthly gross is within the ESI limit. */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean esiApplies;
+
+    /** Professional tax is worked out from the slabs, per half year. */
+    @Column(nullable = false, columnDefinition = "boolean default false")
+    private boolean ptApplies;
 
     @OneToMany(mappedBy = "structure", cascade = CascadeType.ALL, orphanRemoval = true)
     @OrderBy("id")
@@ -76,9 +84,4 @@ public class SalaryStructure {
 
     @LastModifiedDate
     private Instant updatedAt;
-
-    /** The regime in force (MANUAL for salaries saved before regimes came). */
-    public TaxRegime regime() {
-        return taxRegime == null ? TaxRegime.MANUAL : taxRegime;
-    }
 }

@@ -12,6 +12,7 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -67,16 +68,23 @@ public class Payslip {
     @Column(nullable = false, columnDefinition = "integer default 30")
     private int workingDays = 30;
 
-    /** Working days employed in the month (all of them, or from a later start date), before unpaid leave. */
+    /**
+     * Days employed in the month, before unpaid leave: all the working days, or for a month the salary starts or the
+     * person leaves in, the calendar days employed (weekly offs included) scaled to the working days.
+     */
     @Column(nullable = false)
     private int employedDays;
 
-    /** Loss of pay: unpaid days. Paid days = employed days - LOP days. */
-    @Column(nullable = false)
-    private int lopDays;
+    /** Loss of pay: unpaid days, half days allowed. Paid days = employed days - LOP days. */
+    @Column(nullable = false, precision = 4, scale = 1)
+    private BigDecimal lopDays = BigDecimal.ZERO;
 
-    @Column(nullable = false)
-    private int paidDays;
+    @Column(nullable = false, precision = 4, scale = 1)
+    private BigDecimal paidDays = BigDecimal.ZERO;
+
+    /** Approved unpaid leave in the month, counted into the LOP days when the payslip was made. */
+    @Column(precision = 4, scale = 1)
+    private BigDecimal unpaidLeaveDays;
 
     /** As it was when the payslip was made. */
     @Column(length = 100)

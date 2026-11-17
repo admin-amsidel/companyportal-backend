@@ -352,6 +352,10 @@ public class EmployeeService {
         employee.setPhone(Phones.normalize(request.getPhone(), "Phone"));
         employee.setPhotoPath(trimToNull(request.getPhotoPath()));
         employee.setJoinedDate(request.getJoinedDate());
+        if (request.getExitDate() != null && request.getJoinedDate() != null && request.getExitDate().isBefore(request.getJoinedDate())) {
+            throw ApiException.badRequest("The exit date cannot be before the joining date");
+        }
+        employee.setExitDate(request.getExitDate());
         employee.setDob(request.getDob());
         employee.setBloodGroup(trimToNull(request.getBloodGroup()));
         employee.setPersonalEmail(lowerOrNull(request.getPersonalEmail()));

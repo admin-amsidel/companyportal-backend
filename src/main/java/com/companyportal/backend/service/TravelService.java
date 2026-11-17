@@ -113,8 +113,9 @@ public class TravelService {
         c.setMeetingPoint(clean(body.meetingPoint()));
         c.setNotes(clean(body.notes()));
         c.setDistanceKm(km(body.distanceKm()));
+        refuseRepeat(c);
         submit(c, self, body.foodExpense(), body.otherExpense());
-        return view(me, claims.save(c));
+        return view(me, numbered(c));
     }
 
     @Transactional
@@ -135,7 +136,7 @@ public class TravelService {
         c.setMeetingPoint(clean(body.meetingPoint()));
         c.setNotes(clean(body.notes()));
         addPoint(c, TravelStop.Kind.START, body.fromLocation(), body.fix());
-        return view(me, claims.save(c));
+        return view(me, numbered(c));
     }
 
     @Transactional
@@ -202,6 +203,7 @@ public class TravelService {
         if (c.getToLocation() == null || c.getMeetingPoint() == null) {
             throw ApiException.badRequest("Give where you went and the meeting point");
         }
+        refuseRepeat(c);
         submit(c, self, body.foodExpense(), body.otherExpense());
         return view(me, c);
     }
@@ -388,10 +390,47 @@ public class TravelService {
 
     // ---- helpers ----
 
+    /**
+     * PORTAL-15: a claim may not repeat one of the person's claims already sent (waiting, approved or settled; rejected
+     * and deleted ones do not count): the same day and customer, or the same day, route (from and to) and km.
+     */
+    private void refuseRepeat(TravelClaim c) {
+        for (TravelClaim other : claims.sentOn(c.getEmployee().getId(), c.getMeetingDate())) {
+            if (other.getId().equals(c.getId())) {
+                continue;
+            }
+            boolean sameCustomer = c.getCustomer() != null && other.getCustomer() != null
+                    ? c.getCustomer().getId().equals(other.getCustomer().getId()) : same(c.getCustomerName(), other.getCustomerName());
+            if (sameCustomer) {
+                throw ApiException.conflict("You already claimed this trip: " + other.getCode() + " (same day and customer)");
+            }
+            boolean sameRoute = same(c.getFromLocation(), other.getFromLocation()) && same(c.getToLocation(), other.getToLocation())
+                    && c.getDistanceKm() != null && other.getDistanceKm() != null && c.getDistanceKm().compareTo(other.getDistanceKm()) == 0;
+            if (sameRoute) {
+                throw ApiException.conflict("You already claimed this trip: " + other.getCode() + " (same day, route and km)");
+            }
+        }
+    }
+
+    /** Equal ignoring case and spaces at the ends; two empty ones are not a match. */
+    private static boolean same(String a, String b) {
+        return a != null && b != null && !a.isBlank() && a.strip().equalsIgnoreCase(b.strip());
+    }
+
+    /**
+     * Saved, then numbered from its own id (TA-0042): a number is never given twice, even after a deletion or when two
+     * claims are sent at the same moment (PORTAL-15).
+     */
+    private TravelClaim numbered(TravelClaim c) {
+        TravelClaim saved = claims.saveAndFlush(c);
+        saved.setCode("TA-%04d".formatted(saved.getId()));
+        return saved;
+    }
+
     private TravelClaim newClaim(Employee self, TravelClaim.Method method, String customer, LocalDate meetingDate) {
         TravelClaim c = new TravelClaim();
-        Long last = claims.lastId();
-        c.setCode("TA-%04d".formatted((last == null ? 0 : last) + 1));
+        // a placeholder until it is saved and numbered from its id
+        c.setCode("TA-NEW-" + java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 12));
         c.setEmployee(self);
         c.setMethod(method);
         c.setCustomerName(clean(customer));

@@ -61,14 +61,17 @@ class PayslipTest {
         String result = body(json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":9,\"employeeIds\":[" + emp[0] + "]}")
                 .andExpect(status().isOk()).andExpect(jsonPath("$.created").value(1)));
         String id = payslipId(emp[0], 2025, 9);
-        // joined Tue 9th: 19 working days (not Sundays) of 30; earnings = monthly / 30 x 19, deductions and reimbursements in full
+        // joined Tue 9th: the 22 days to the 30th, Sundays included as in a full month (Q1); earnings and the fixed
+        // deductions = monthly / 30 x 22, reimbursements and the typed tax in full
         mockMvc.perform(get("/api/payroll/payslips/" + id).header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.status").value("DRAFT"))
                 .andExpect(jsonPath("$.periodLabel").value("September 2025"))
                 .andExpect(jsonPath("$.daysInMonth").value(30))
                 .andExpect(jsonPath("$.workingDays").value(30))
-                .andExpect(jsonPath("$.paidDays").value(19))
-                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(61926.00)))
+                .andExpect(jsonPath("$.employedDays").value(22))
+                .andExpect(jsonPath("$.paidDays").value(22))
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(71704.00)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'EPF')].amount").value(hasItem(1320.00)))
                 .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].fullAmount").value(hasItem(97778.00)))
                 .andExpect(jsonPath("$.lines[?(@.code == 'TDS')].amount").value(hasItem(24957.00)))
                 .andExpect(jsonPath("$.company.address").value("Kakkanad, Kochi, Kerala"));
@@ -145,7 +148,7 @@ class PayslipTest {
         json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":5,\"employeeIds\":[" + emp[0] + "]}");
         String april = payslipId(emp[0], 2025, 4);
         String may = payslipId(emp[0], 2025, 5);
-        // two unpaid days in May (30 working days): earnings for 28
+        // two unpaid days in May (30 working days): earnings and the fixed deductions for 28, worked out again
         String mayLines = body(mockMvc.perform(get("/api/payroll/payslips/" + may).header("Authorization", auth(owner))));
         json(put("/api/payroll/payslips/" + may), owner, "{\"payDate\":\"2025-05-31\",\"lopDays\":2,\"lines\":[],\"publish\":false}")
                 .andExpect(jsonPath("$.paidDays").value(28)).andExpect(jsonPath("$.lopDays").value(2));
@@ -159,23 +162,26 @@ class PayslipTest {
                 .andExpect(jsonPath("$.credited").value(2));
         mockMvc.perform(get("/api/payroll/payslips/" + april).header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.paymentRef").value("VCH-0601")).andExpect(jsonPath("$.paymentRemarks").value("Cash voucher"));
-        // May's year to date = April + May
+        // May's year to date = April + May (May's BASIC: 97,778 / 30 x 28 = 91,259)
         mockMvc.perform(get("/api/my-pay/payslips/" + may).header("Authorization", auth(emp[1])))
                 .andExpect(jsonPath("$.lines[?(@.code == 'TDS')].ytd").value(hasItem(49914.00)))
-                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].ytd").value(hasItem(195556.00)));
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].ytd").value(hasItem(189037.00)));
 
         mockMvc.perform(get("/api/my-pay").param("fy", "2025").header("Authorization", auth(emp[1])))
                 .andExpect(jsonPath("$.fyLabel").value("FY 2025-26"))
                 .andExpect(jsonPath("$.salary.set").value(true))
-                .andExpect(jsonPath("$.dashboard.expectedGross").value(2863824.00))
-                .andExpect(jsonPath("$.dashboard.earnedGross").value(477304.00))
-                .andExpect(jsonPath("$.dashboard.taxesPaid").value(52414.00))
-                .andExpect(jsonPath("$.dashboard.expectedTax").value(314484.00))
+                // April 2,38,652 + May 2,22,742 (28 days) + ten months to come at 2,38,652
+                .andExpect(jsonPath("$.dashboard.expectedGross").value(2847914.00))
+                .andExpect(jsonPath("$.dashboard.earnedGross").value(461394.00))
+                // income tax 24,957 a month (typed) + professional tax 1,250 (May: 1,167 for 28 days)
+                .andExpect(jsonPath("$.dashboard.taxesPaid").value(52331.00))
+                .andExpect(jsonPath("$.dashboard.expectedTax").value(314401.00))
                 .andExpect(jsonPath("$.dashboard.balanceGross").value(2386520.00))
                 .andExpect(jsonPath("$.dashboard.monthsPaid").value(2))
                 .andExpect(jsonPath("$.months.length()").value(12))
                 .andExpect(jsonPath("$.months[0].label").value("Apr"))
-                .andExpect(jsonPath("$.months[1].net").value(214945.00))
+                // May: 2,22,742 less the deductions for 28 days (27,897) + 4,400 reimbursed
+                .andExpect(jsonPath("$.months[1].net").value(199245.00))
                 .andExpect(jsonPath("$.months[2].payslipId").value(nullValue()))
                 .andExpect(jsonPath("$.payslips[0].label").value("May 2025"));
 
@@ -342,21 +348,33 @@ class PayslipTest {
         json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner,
                 "{\"effectiveFrom\":\"2025-04-01\",\"taxRegime\":\"NEW\",\"lines\":%s}".formatted(lines))
                 .andExpect(jsonPath("$.lines[?(@.code == 'TDS')].monthly").value(hasItem(12567.0)));
-        // June, a full month (April and May made no payslip: they count as paid at the salary): the same tax
+        // June: April and May made no payslip, so they count nothing (paid outside the portal); ten months of 1,50,000 =
+        // 15 lakh - 75,000 = 14.25 lakh: 20,000 + 40,000 + 33,750 = 93,750 + cess 3,750 = 97,500, over June to March = 9,750
         json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":6,\"employeeIds\":[" + emp[0] + "]}")
                 .andExpect(jsonPath("$.created").value(1));
         String id = payslipId(emp[0], 2025, 6);
-        String view = body(mockMvc.perform(get("/api/payroll/payslips/" + id).header("Authorization", auth(owner)))
+        mockMvc.perform(get("/api/payroll/payslips/" + id).header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'TDS')].amount").value(hasItem(9750.0)))
+                .andExpect(jsonPath("$.tax.regime").value("NEW")).andExpect(jsonPath("$.tax.monthsLeft").value(9));
+        // April and May were paid elsewhere: 3 lakh, with 25,134 tax deducted; the year is 18 lakh again, 1,50,800 less
+        // 25,134 over ten months = 12,567
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner,
+                "{\"effectiveFrom\":\"2025-04-01\",\"outsideIncome\":300000,\"outsideTax\":25134,\"lines\":%s}".formatted(lines))
+                // deducted already: the 25,134 outside, and June's draft (9,750); April and May show as paid outside
+                .andExpect(jsonPath("$.outsideIncome").value(300000.0)).andExpect(jsonPath("$.tax.taxBefore").value(34884.0))
+                .andExpect(jsonPath("$.plan[0].source").value("OUTSIDE")).andExpect(jsonPath("$.plan[2].source").value("PAYSLIP"));
+        String view = body(mockMvc.perform(post("/api/payroll/payslips/" + id + "/recalculate").header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.lines[?(@.code == 'TDS')].amount").value(hasItem(12567.0)))
-                .andExpect(jsonPath("$.tax.regime").value("NEW")).andExpect(jsonPath("$.tax.monthsLeft").value(9)));
+                .andExpect(jsonPath("$.tax.yearTax").value(150800.0)).andExpect(jsonPath("$.tax.taxBefore").value(25134.0)));
 
         // half the month unpaid: less pay, less tax; a tax typed in its line is not kept
         List<Map<String, Object>> ls = JsonPath.read(view, "$.lines");
         String half = ls.stream().map(l -> "{\"id\":%s,\"amount\":%s}".formatted(l.get("id"),
                         "BASIC".equals(l.get("code")) ? "75000" : "TDS".equals(l.get("code")) ? "99999" : l.get("amount")))
                 .collect(Collectors.joining(",", "[", "]"));
-        double preview = ((Number) JsonPath.read(body(json(post("/api/payroll/payslips/" + id + "/tax"), owner, "{\"lines\":%s}".formatted(half))
-                .andExpect(status().isOk())), "$.monthTax")).doubleValue();
+        double preview = ((Number) JsonPath.read(body(json(post("/api/payroll/payslips/" + id + "/preview"), owner,
+                        "{\"lopDays\":13,\"lines\":%s}".formatted(half))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.paidDays").value(17.0))), "$.tax.monthTax")).doubleValue();
         String saved = body(json(put("/api/payroll/payslips/" + id), owner,
                 "{\"payDate\":\"2025-06-30\",\"lopDays\":13,\"lines\":%s,\"publish\":false}".formatted(half)).andExpect(status().isOk()));
         List<Double> tds = JsonPath.read(saved, "$.lines[?(@.code == 'TDS')].amount");
@@ -369,6 +387,119 @@ class PayslipTest {
         mockMvc.perform(post("/api/payroll/payslips/" + id + "/recalculate").header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.lines[?(@.code == 'TDS')].amount").value(hasItem(5000.0)))
                 .andExpect(jsonPath("$.tax").doesNotExist());
+    }
+
+    @Test
+    void aRaiseMidYearIsPaidForItsShareOfTheMonth() throws Exception {
+        String[] emp = employee("2025-04-01");
+        String from = "[" + line("BASIC", "30000") + "]";
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner, "{\"effectiveFrom\":\"2025-04-01\",\"lines\":%s}".formatted(from))
+                .andExpect(status().isOk());
+        // a raise from 16 October: a second revision of the year
+        String raised = body(json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner,
+                        "{\"effectiveFrom\":\"2025-10-16\",\"lines\":[%s]}".formatted(line("BASIC", "40000")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.revisions.length()").value(2))
+                .andExpect(jsonPath("$.revisions[0].until").value("2025-10-15"))
+                .andExpect(jsonPath("$.effectiveFrom").value("2025-10-16"))
+                // April to mid-October at 30,000, then 40,000: 6 x 30,000 + 35,161 + 5 x 40,000
+                .andExpect(jsonPath("$.totals.yearGross").value(415161.0)));
+        Integer raise = JsonPath.read(raised, "$.revisionId");
+        // October: 15 days at 30,000 and 16 at 40,000 = (4,50,000 + 6,40,000) / 31 = 35,161
+        json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":10,\"employeeIds\":[" + emp[0] + "]}");
+        mockMvc.perform(get("/api/payroll/payslips/" + payslipId(emp[0], 2025, 10)).header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(35161.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].fullAmount").value(hasItem(40000.0)));
+        mockMvc.perform(get("/api/payroll/salaries").param("fy", "2025").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.rows[?(@.employee.id == " + emp[0] + ")].revisions").value(hasItem(2)));
+        // two revisions cannot start the same day; one can be removed (October's draft first, made with it)
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner,
+                "{\"revisionId\":%s,\"effectiveFrom\":\"2025-04-01\",\"lines\":%s}".formatted(raise, from))
+                .andExpect(status().isConflict());
+        mockMvc.perform(delete("/api/payroll/payslips/" + payslipId(emp[0], 2025, 10)).header("Authorization", auth(owner)))
+                .andExpect(status().isNoContent());
+        mockMvc.perform(delete("/api/payroll/salaries/" + emp[0]).param("fy", "2025").param("revisionId", String.valueOf(raise))
+                .header("Authorization", auth(owner))).andExpect(status().isNoContent());
+        mockMvc.perform(get("/api/payroll/salaries/" + emp[0]).param("fy", "2025").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.revisions.length()").value(1)).andExpect(jsonPath("$.totals.yearGross").value(360000.0));
+    }
+
+    @Test
+    void epfEsiAndProfessionalTaxAreWorkedOut() throws Exception {
+        String[] emp = employee("2025-04-01");
+        String lines = "[" + line("BASIC", "14000") + "," + line("DA", "2000") + "," + line("HRA", "4000") + "]";
+        // gross 20,000: EPF 12% of the 15,000 ceiling = 1,800; ESI 0.75% = 150; professional tax on a half year of 1.2 lakh = 1,000, a sixth a month
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner, ("{\"effectiveFrom\":\"2025-04-01\",\"pfApplies\":true,"
+                        + "\"esiApplies\":true,\"ptApplies\":true,\"lines\":%s}").formatted(lines))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.lines[?(@.code == 'EPF')].monthly").value(hasItem(1800.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'EPF')].auto").value(hasItem(true)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'ESI')].monthly").value(hasItem(150.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'PT')].monthly").value(hasItem(167.0)));
+        json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":4,\"employeeIds\":[" + emp[0] + "]}");
+        String april = payslipId(emp[0], 2025, 4);
+        // ten unpaid days: paid 20 of 30, gross 13,333; EPF on the Basic + DA paid (10,667) = 1,280; ESI = 100 (rounded up)
+        json(put("/api/payroll/payslips/" + april), owner, "{\"payDate\":\"2025-04-30\",\"lopDays\":10,\"lines\":[],\"publish\":false}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.money.gross").value(13333.0))
+                .andExpect(jsonPath("$.lines[?(@.code == 'EPF')].amount").value(hasItem(1280.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'ESI')].amount").value(hasItem(100.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'PT')].amount").value(hasItem(167.0)));
+        // EPF on the full wage, and a gross over ESI's 21,000: EPF 12% of 22,000 = 2,640, no ESI
+        String more = "[" + line("BASIC", "20000") + "," + line("DA", "2000") + "," + line("HRA", "4000") + "]";
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner, ("{\"effectiveFrom\":\"2025-04-01\",\"pfFullWage\":true,"
+                        + "\"lines\":%s}").formatted(more))
+                .andExpect(jsonPath("$.lines[?(@.code == 'EPF')].monthly").value(hasItem(2640.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'ESI')].monthly").value(hasItem(0.0)));
+    }
+
+    @Test
+    void theExitDateEndsThePay() throws Exception {
+        String[] emp = employee("2025-04-01", "EMPLOYEE", "\"exitDate\":\"2026-01-15\"");
+        salary(emp[0], "2025-04-01");
+        // the salary cannot start after the exit date; the year is paid April to January
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner, "{\"effectiveFrom\":\"2026-02-01\",\"lines\":[%s]}"
+                .formatted(line("BASIC", "1000"))).andExpect(status().isBadRequest());
+        mockMvc.perform(get("/api/payroll/salaries/" + emp[0]).param("fy", "2025").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.totals.monthsInYear").value(10)).andExpect(jsonPath("$.plan[10].source").value("NONE"));
+        // January up to the 15th: 15 of 31 days, scaled to 30 = 15 (14.5 rounded)
+        json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2026,\"month\":1,\"employeeIds\":[" + emp[0] + "]}")
+                .andExpect(jsonPath("$.created").value(1));
+        mockMvc.perform(get("/api/payroll/payslips/" + payslipId(emp[0], 2026, 1)).header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.employedDays").value(15)).andExpect(jsonPath("$.employee.exitDate").value("2026-01-15"));
+        // nothing after
+        json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2026,\"month\":2,\"employeeIds\":[" + emp[0] + "]}")
+                .andExpect(jsonPath("$.created").value(0)).andExpect(jsonPath("$.skipped").value(1));
+    }
+
+    @Test
+    void approvedUnpaidLeaveBecomesLossOfPay() throws Exception {
+        String[] emp = employee("2025-04-01");
+        // two working days of leave without pay in the leave plan in force (a Monday and Tuesday)
+        String current = body(mockMvc.perform(get("/api/leave/me/current").header("Authorization", auth(emp[1]))));
+        java.time.LocalDate until = java.time.LocalDate.parse(JsonPath.read(current, "$.validUntil"));
+        java.time.LocalDate monday = java.time.LocalDate.parse(JsonPath.read(current, "$.today"))
+                .with(java.time.temporal.TemporalAdjusters.next(java.time.DayOfWeek.MONDAY));
+        while (monday.plusDays(1).getMonthValue() != monday.getMonthValue()) {
+            monday = monday.plusWeeks(1);
+        }
+        org.junit.jupiter.api.Assumptions.assumeTrue(!monday.plusDays(1).isAfter(until), "the leave plan in force ends too soon");
+        List<Map<String, Object>> types = JsonPath.read(body(mockMvc.perform(get("/api/leave/types").header("Authorization", auth(owner)))),
+                "$[?(@.code == 'LWP')]");
+        String leave = body(json(post("/api/leave/me/requests"), emp[1], "{\"leaveTypeId\":%s,\"fromDate\":\"%s\",\"toDate\":\"%s\",\"halfDay\":false}"
+                .formatted(types.getFirst().get("id"), monday, monday.plusDays(1))).andExpect(status().isCreated()));
+        if ("PENDING".equals(JsonPath.read(leave, "$.status"))) {
+            json(post("/api/leave/requests/" + JsonPath.read(leave, "$.id") + "/approve"), owner, "{}").andExpect(status().isOk());
+        }
+        int fy = monday.getMonthValue() >= 4 ? monday.getYear() : monday.getYear() - 1;
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=" + fy), owner, "{\"effectiveFrom\":\"%d-04-01\",\"lines\":[%s]}"
+                .formatted(fy, line("BASIC", "30000"))).andExpect(status().isOk());
+        json(post("/api/payroll/payslips/generate"), owner, "{\"year\":%d,\"month\":%d,\"employeeIds\":[%s]}"
+                .formatted(monday.getYear(), monday.getMonthValue(), emp[0])).andExpect(jsonPath("$.created").value(1));
+        mockMvc.perform(get("/api/payroll/payslips/" + payslipId(emp[0], monday.getYear(), monday.getMonthValue())).header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.lopDays").value(2.0)).andExpect(jsonPath("$.unpaidLeaveDays").value(2.0))
+                .andExpect(jsonPath("$.paidDays").value(28.0))
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(28000.0)));
     }
 
     @Test
@@ -419,11 +550,16 @@ class PayslipTest {
     }
 
     private String[] employee(String joined, String role) throws Exception {
+        return employee(joined, role, null);
+    }
+
+    /** more: further fields of the employee, e.g. "exitDate":"2026-01-15". */
+    private String[] employee(String joined, String role, String more) throws Exception {
         String userId = "ps.emp" + (++seq);
         String json = """
                 {"name":"Slip %d","userId":"%s","password":"ab@123","role":"%s","brandId":%d,
-                 "phone":"+91 98470 00000","joinedDate":"%s"}
-                """.formatted(seq, userId, role, dw, joined);
+                 "phone":"+91 98470 00000","joinedDate":"%s"%s}
+                """.formatted(seq, userId, role, dw, joined, more == null ? "" : "," + more);
         String id = String.valueOf((Object) JsonPath.read(body(mockMvc.perform(post("/api/employees").header("Authorization", auth(owner))
                 .contentType(MediaType.APPLICATION_JSON).content(json)).andExpect(status().isCreated())), "$.id"));
         return new String[]{id, token(changePin(token(login(userId, "ab@123")), "ab@123", "cd@456"))};

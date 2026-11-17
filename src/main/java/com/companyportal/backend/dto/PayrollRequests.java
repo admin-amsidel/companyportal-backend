@@ -43,11 +43,34 @@ public final class PayrollRequests {
         private boolean tax;
     }
 
-    /** A salary for one financial year: the monthly amount of each component (missing = 0). */
+    /**
+     * One salary revision of a financial year: the monthly amount of each component (missing = 0). revisionId: the one to
+     * change; empty = a new revision (the year's first, or a raise from effectiveFrom). EPF, ESI and professional tax are
+     * worked out when they apply; the year's tax set-up (regime, declaration, income and tax paid outside the portal)
+     * is shared by its revisions.
+     */
     @Data
     public static class Salary {
+        private Long revisionId;
+
         @NotNull
         private LocalDate effectiveFrom;
+
+        /** Empty = keep (a new revision: as the one before it). */
+        private Boolean pfApplies;
+        private Boolean pfFullWage;
+        private Boolean esiApplies;
+        private Boolean ptApplies;
+
+        /** Gross salary paid this year outside the portal (before it was used, or by a previous employer); empty = keep. */
+        @DecimalMin(value = "0", message = "Income cannot be negative")
+        @Digits(integer = 12, fraction = 2, message = "At most 2 decimals")
+        private BigDecimal outsideIncome;
+
+        /** Income tax already deducted this year outside the portal; empty = keep. */
+        @DecimalMin(value = "0", message = "Tax cannot be negative")
+        @Digits(integer = 12, fraction = 2, message = "At most 2 decimals")
+        private BigDecimal outsideTax;
 
         @Size(max = 500)
         private String notes;
@@ -83,24 +106,65 @@ public final class PayrollRequests {
         private BigDecimal taxDeclared;
     }
 
-    /** The salary being typed, for the tax under both regimes before it is saved. */
+    /**
+     * A salary revision being typed, for the year's income tax under both regimes before it is saved: it stands in for
+     * revisionId (empty = added as a new revision) among the person's revisions of the year.
+     */
     @Data
     public static class TaxPreview {
         @NotNull
-        private LocalDate effectiveFrom;
+        private Long employeeId;
+
+        private Long revisionId;
 
         @NotNull
-        @DecimalMin("0")
-        @Digits(integer = 12, fraction = 2)
-        private BigDecimal monthlyGross;
+        private LocalDate effectiveFrom;
 
-        @DecimalMin("0")
-        @Digits(integer = 12, fraction = 2)
-        private BigDecimal monthlyProfessionalTax;
+        @Min(1)
+        @Max(31)
+        private Integer workingDays;
+
+        @NotNull
+        @Size(max = 50)
+        private List<@Valid Line> lines;
+
+        private boolean pfApplies;
+        private boolean pfFullWage;
+        private boolean esiApplies;
+        private boolean ptApplies;
 
         @DecimalMin("0")
         @Digits(integer = 12, fraction = 2)
         private BigDecimal declared;
+
+        @DecimalMin("0")
+        @Digits(integer = 12, fraction = 2)
+        private BigDecimal outsideIncome;
+
+        @DecimalMin("0")
+        @Digits(integer = 12, fraction = 2)
+        private BigDecimal outsideTax;
+    }
+
+    /** The professional tax slabs, all of them, lowest first. */
+    @Data
+    public static class PtSlabs {
+        @NotNull
+        @Size(min = 1, max = 30, message = "Give 1 to 30 slabs")
+        private List<@Valid PtSlab> slabs;
+    }
+
+    @Data
+    public static class PtSlab {
+        @NotNull
+        @DecimalMin(value = "0", message = "Income cannot be negative")
+        @Digits(integer = 12, fraction = 2)
+        private BigDecimal fromIncome;
+
+        @NotNull
+        @DecimalMin(value = "0", message = "Tax cannot be negative")
+        @Digits(integer = 8, fraction = 2)
+        private BigDecimal halfYearTax;
     }
 
     @Data

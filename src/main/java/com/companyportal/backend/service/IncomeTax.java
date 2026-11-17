@@ -22,10 +22,16 @@ import java.util.List;
  *   <li>New regime, FY 2023-24 and before: nil to 3 lakh, 5% to 6, 10% to 9, 15% to 12, 20% to 15, 30% above;
  *       ₹50,000; no tax up to 7 lakh.</li>
  *   <li>Old regime: nil to 2.5 lakh, 5% to 5, 20% to 10, 30% above; ₹50,000; professional tax and the declared
- *       deductions (80C, 80D, HRA, home-loan interest...) come off; no tax up to 5 lakh (rebate up to ₹12,500).</li>
+ *       deductions (80C, 80D, HRA, home-loan interest...) come off; no tax up to 5 lakh (rebate up to ₹12,500).
+ *       Senior citizens (60 or more by 31 March): nil to 3 lakh; super seniors (80 or more): nil to 5 lakh.</li>
  * </ul>
+ * The newest rules known are FY {@value #LATEST_RULES_FY}'s; a later year uses them and says so (rulesFromEarlierYear),
+ * until this class is given that year's Budget rules.
  */
 public final class IncomeTax {
+
+    /** The latest financial year whose new-regime rules are written here. */
+    public static final int LATEST_RULES_FY = 2025;
 
     private IncomeTax() {
     }
@@ -33,7 +39,7 @@ public final class IncomeTax {
     /** One way the tax was worked out, all yearly except monthlyTax. */
     public record Calc(TaxRegime regime, String rules, BigDecimal income, BigDecimal standardDeduction, BigDecimal professionalTax,
                        BigDecimal declared, BigDecimal taxable, BigDecimal slabTax, BigDecimal rebate, BigDecimal surcharge,
-                       BigDecimal cess, BigDecimal annualTax, int months, BigDecimal monthlyTax) {
+                       BigDecimal cess, BigDecimal annualTax, int months, BigDecimal monthlyTax, boolean rulesFromEarlierYear) {
     }
 
     private record Slab(long upTo, int percent) {
@@ -44,13 +50,23 @@ public final class IncomeTax {
 
     private static final long INF = Long.MAX_VALUE;
 
-    private static Rules rules(TaxRegime regime, int fyStartYear) {
+    private static Rules rules(TaxRegime regime, int fyStartYear, int age) {
         if (regime == TaxRegime.OLD) {
+            if (age >= 80) {
+                return new Rules("Old regime (super senior citizen)", 50_000, List.of(new Slab(500_000, 0), new Slab(1_000_000, 20), new Slab(INF, 30)),
+                        500_000, 12_500, true);
+            }
+            if (age >= 60) {
+                return new Rules("Old regime (senior citizen)", 50_000, List.of(new Slab(300_000, 0), new Slab(500_000, 5), new Slab(1_000_000, 20),
+                        new Slab(INF, 30)), 500_000, 12_500, true);
+            }
             return new Rules("Old regime", 50_000, List.of(new Slab(250_000, 0), new Slab(500_000, 5), new Slab(1_000_000, 20), new Slab(INF, 30)),
                     500_000, 12_500, true);
         }
         if (fyStartYear >= 2025) {
-            return new Rules("New regime (FY 2025-26 rules)", 75_000, List.of(new Slab(400_000, 0), new Slab(800_000, 5), new Slab(1_200_000, 10),
+            String label = fyStartYear > LATEST_RULES_FY ? "New regime (FY 2025-26 rules: check FY " + fyStartYear + "-" + String.format("%02d", (fyStartYear + 1) % 100)
+                    + "'s Budget)" : "New regime (FY 2025-26 rules)";
+            return new Rules(label, 75_000, List.of(new Slab(400_000, 0), new Slab(800_000, 5), new Slab(1_200_000, 10),
                     new Slab(1_600_000, 15), new Slab(2_000_000, 20), new Slab(2_400_000, 25), new Slab(INF, 30)), 1_200_000, 60_000, false);
         }
         if (fyStartYear == 2024) {
@@ -70,10 +86,16 @@ public final class IncomeTax {
      * @param months          the months the salary is paid in the year: the monthly tax is the yearly tax spread over them
      */
     public static Calc calc(TaxRegime regime, int fyStartYear, BigDecimal income, BigDecimal professionalTax, BigDecimal declared, int months) {
+        return calc(regime, fyStartYear, income, professionalTax, declared, months, 0);
+    }
+
+    /** As above, for a person of this age on the year's last day (31 March): 60 and 80 change the old regime's slabs. */
+    public static Calc calc(TaxRegime regime, int fyStartYear, BigDecimal income, BigDecimal professionalTax, BigDecimal declared, int months,
+                            int age) {
         if (regime == TaxRegime.MANUAL) {
             throw new IllegalArgumentException("Manual tax is typed in, not worked out");
         }
-        Rules r = rules(regime, fyStartYear);
+        Rules r = rules(regime, fyStartYear, age);
         BigDecimal gross = nz(income).setScale(2, RoundingMode.HALF_UP);
         BigDecimal sd = gross.min(BigDecimal.valueOf(r.standardDeduction())).setScale(2, RoundingMode.HALF_UP);
         BigDecimal pt = r.ptDeductible() ? nz(professionalTax).setScale(2, RoundingMode.HALF_UP) : BigDecimal.ZERO.setScale(2);
@@ -98,7 +120,8 @@ public final class IncomeTax {
         BigDecimal annual = round10(afterRebate.add(surcharge).add(cess));
         int m = Math.max(months, 1);
         BigDecimal monthly = annual.divide(BigDecimal.valueOf(m), 0, RoundingMode.HALF_UP).setScale(2);
-        return new Calc(regime, r.label(), gross, sd, pt, dec, taxable, slab, rebate, surcharge, cess, annual, months, monthly);
+        return new Calc(regime, r.label(), gross, sd, pt, dec, taxable, slab, rebate, surcharge, cess, annual, months, monthly,
+                regime == TaxRegime.NEW && fyStartYear > LATEST_RULES_FY);
     }
 
     private static BigDecimal slabTax(Rules r, BigDecimal taxable) {

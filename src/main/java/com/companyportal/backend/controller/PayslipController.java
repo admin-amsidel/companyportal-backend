@@ -63,11 +63,11 @@ public class PayslipController {
         return service.save(me, id, body);
     }
 
-    /** This month's income tax for the amounts being typed (nothing saved); empty for a Manual tax salary. */
+    /** The draft with the days and amounts being typed, worked out (EPF, ESI, professional tax, income tax); nothing saved. */
     @Checkpoint({Menus.PAYSLIPS})
-    @PostMapping("/api/payroll/payslips/{id}/tax")
-    public PayslipTax tax(@AuthenticationPrincipal AuthUser me, @PathVariable Long id, @Valid @RequestBody TaxPreview body) {
-        return service.taxPreview(me, id, body);
+    @PostMapping("/api/payroll/payslips/{id}/preview")
+    public PayslipPreview preview(@AuthenticationPrincipal AuthUser me, @PathVariable Long id, @Valid @RequestBody Preview body) {
+        return service.preview(me, id, body);
     }
 
     @Checkpoint({Menus.PAYSLIPS})

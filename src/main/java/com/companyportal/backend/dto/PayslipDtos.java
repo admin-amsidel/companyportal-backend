@@ -51,9 +51,12 @@ public final class PayslipDtos {
         @NotNull
         private LocalDate payDate;
 
-        @Min(0)
-        @Max(31)
-        private int lopDays;
+        /** Unpaid days, in half days (e.g. 1.5). */
+        @NotNull
+        @DecimalMin(value = "0", message = "LOP days cannot be negative")
+        @DecimalMax(value = "31", message = "LOP days: at most 31")
+        @Digits(integer = 2, fraction = 1, message = "LOP days: whole or half days, e.g. 1.5")
+        private BigDecimal lopDays = BigDecimal.ZERO;
 
         /** Working days in this month; empty = as it is. */
         @Min(value = 1, message = "Working days: 1 to 31")
@@ -67,10 +70,13 @@ public final class PayslipDtos {
         private boolean publish;
     }
 
+    /** A line's amount: by the line's id, or by its component's code (a line the payslip does not have yet). */
     @Data
     public static class LineAmount {
-        @NotNull
         private Long id;
+
+        @Size(max = 20)
+        private String code;
 
         @NotNull
         @DecimalMin(value = "0", message = "Amounts cannot be negative")
@@ -135,8 +141,8 @@ public final class PayslipDtos {
 
     /** One person in the month's list: salary set this month or not, and their payslip if there is one. */
     /** paidOn / paymentMode: when and how it was credited (null = not yet). */
-    public record Row(Person employee, boolean salarySet, Long payslipId, PayslipStatus status, int workingDays, int paidDays,
-                      int lopDays, Money money, boolean editable, LocalDate paidOn, PaymentMode paymentMode) {
+    public record Row(Person employee, boolean salarySet, Long payslipId, PayslipStatus status, int workingDays, BigDecimal paidDays,
+                      BigDecimal lopDays, Money money, boolean editable, LocalDate paidOn, PaymentMode paymentMode) {
     }
 
     /** published counts all published payslips; credited those of them also credited. */
@@ -144,14 +150,15 @@ public final class PayslipDtos {
                             int published, int credited, Money total) {
     }
 
+    /** auto: worked out by payroll (EPF, ESI, professional tax, income tax), not typed. id: null on a preview's new line. */
     public record LineView(Long id, String code, String name, PayComponentKind kind, boolean tax, BigDecimal fullAmount,
-                           BigDecimal amount, BigDecimal ytd) {
+                           BigDecimal amount, BigDecimal ytd, boolean auto) {
     }
 
     public record PayslipView(Long id, Person employee, String designationName, int year, int month, String periodLabel,
                               int fyStartYear, PayslipStatus status, LocalDate payDate, int daysInMonth, int workingDays,
-                              int employedDays,
-                              int lopDays, int paidDays, List<LineView> lines, Money money, String netInWords,
+                              int employedDays, BigDecimal lopDays, BigDecimal paidDays, BigDecimal unpaidLeaveDays,
+                              List<LineView> lines, Money money, String netInWords,
                               Company company, boolean editable, String publishedByName, Instant publishedAt,
                               Instant updatedAt, LocalDate paidOn, PaymentMode paymentMode, String paymentRef,
                               String paymentRemarks, String paidRecordedByName, PayslipTax tax) {
@@ -163,15 +170,34 @@ public final class PayslipDtos {
      * what is left spread over this and the months to come.
      */
     public record PayslipTax(com.companyportal.backend.entity.TaxRegime regime, String rules, BigDecimal yearIncome, BigDecimal yearTax,
-                             BigDecimal taxBefore, int monthsLeft, BigDecimal monthTax) {
+                             BigDecimal taxBefore, int monthsLeft, BigDecimal monthTax, boolean rulesFromEarlierYear) {
     }
 
-    /** The payslip's amounts being typed, for this month's income tax before saving. */
+    /**
+     * A draft being changed, worked out before it is saved: these days, and the amounts typed (reset = the days changed:
+     * earnings and fixed deductions are worked out again for them, the typed amounts left out).
+     */
     @Data
-    public static class TaxPreview {
+    public static class Preview {
         @NotNull
+        @DecimalMin("0")
+        @DecimalMax("31")
+        @Digits(integer = 2, fraction = 1)
+        private BigDecimal lopDays = BigDecimal.ZERO;
+
+        @Min(1)
+        @Max(31)
+        private Integer workingDays;
+
         @Size(max = 60)
         private List<@Valid LineAmount> lines;
+
+        private boolean reset;
+    }
+
+    /** What the draft would be: its days, every line (EPF, ESI, professional tax and income tax worked out) and the tax. */
+    public record PayslipPreview(int workingDays, int employedDays, BigDecimal lopDays, BigDecimal paidDays, List<LineView> lines,
+                                 Money money, PayslipTax tax) {
     }
 
     public record GenerateResult(int created, int skipped, List<String> notes) {
@@ -192,7 +218,7 @@ public final class PayslipDtos {
     public record MonthPay(int year, int month, String label, Long payslipId, BigDecimal gross, BigDecimal net, BigDecimal tax) {
     }
 
-    public record Summary(Long id, int year, int month, String label, LocalDate payDate, int paidDays, int lopDays, Money money,
+    public record Summary(Long id, int year, int month, String label, LocalDate payDate, BigDecimal paidDays, BigDecimal lopDays, Money money,
                           LocalDate paidOn, PaymentMode paymentMode) {
     }
 

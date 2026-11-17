@@ -83,4 +83,56 @@ class IncomeTaxTest {
         assertThat(c.annualTax()).isEqualByComparingTo("81900");
         assertThat(c.monthlyTax()).isEqualByComparingTo("11700");
     }
+
+    @Test
+    void surchargeMarginalReliefJustAbove50Lakh() {
+        // Q4. 50.1 lakh taxable: 10,83,000 tax; 10% surcharge would be 1,08,300, but tax + surcharge may be at most the tax
+        // at 50 lakh (10,80,000) + the 10,000 above it: surcharge 7,000; cess 43,600
+        IncomeTax.Calc c = newer(2025, 5_085_000);
+        assertThat(c.taxable()).isEqualByComparingTo("5010000");
+        assertThat(c.slabTax()).isEqualByComparingTo("1083000");
+        assertThat(c.surcharge()).isEqualByComparingTo("7000");
+        assertThat(c.annualTax()).isEqualByComparingTo("1133600");
+    }
+
+    @Test
+    void surchargeAbove1CroreAndTheNewRegimesTopRate() {
+        // 1.05 crore: 27,30,000 + 15% = 4,09,500 (below the relief cap) + cess 1,25,580
+        IncomeTax.Calc crore = newer(2025, 10_575_000);
+        assertThat(crore.slabTax()).isEqualByComparingTo("2730000");
+        assertThat(crore.surcharge()).isEqualByComparingTo("409500");
+        assertThat(crore.annualTax()).isEqualByComparingTo("3265080");
+        // 6 crore: the new regime stops at 25%; 1,75,80,000 + 43,95,000 + cess 8,79,000
+        IncomeTax.Calc six = newer(2025, 60_075_000);
+        assertThat(six.surcharge()).isEqualByComparingTo("4395000");
+        assertThat(six.annualTax()).isEqualByComparingTo("22854000");
+        // the old regime goes to 37% above 5 crore: 1,78,12,500 + 65,90,625 + cess 9,76,125
+        IncomeTax.Calc old = IncomeTax.calc(TaxRegime.OLD, 2025, BigDecimal.valueOf(60_050_000), BigDecimal.ZERO, null, 12);
+        assertThat(old.slabTax()).isEqualByComparingTo("17812500");
+        assertThat(old.surcharge()).isEqualByComparingTo("6590625");
+        assertThat(old.annualTax()).isEqualByComparingTo("25379250");
+    }
+
+    @Test
+    void seniorCitizensUnderTheOldRegime() {
+        // 8 lakh taxable: 72,500 + cess = 75,400; at 60 nil to 3 lakh: 70,000 + cess = 72,800; at 80 nil to 5 lakh: 60,000 + cess = 62,400
+        BigDecimal income = BigDecimal.valueOf(850_000);
+        assertThat(IncomeTax.calc(TaxRegime.OLD, 2025, income, BigDecimal.ZERO, null, 12, 45).annualTax()).isEqualByComparingTo("75400");
+        assertThat(IncomeTax.calc(TaxRegime.OLD, 2025, income, BigDecimal.ZERO, null, 12, 65).annualTax()).isEqualByComparingTo("72800");
+        IncomeTax.Calc superSenior = IncomeTax.calc(TaxRegime.OLD, 2025, income, BigDecimal.ZERO, null, 12, 85);
+        assertThat(superSenior.annualTax()).isEqualByComparingTo("62400");
+        assertThat(superSenior.rules()).contains("super senior");
+        // the new regime is the same at any age
+        assertThat(IncomeTax.calc(TaxRegime.NEW, 2025, BigDecimal.valueOf(1_375_000), BigDecimal.ZERO, null, 12, 70).annualTax())
+                .isEqualByComparingTo("78000");
+    }
+
+    @Test
+    void aYearAfterTheLatestRulesSaysSo() {
+        assertThat(newer(2025, 1_375_000).rulesFromEarlierYear()).isFalse();
+        IncomeTax.Calc later = newer(2026, 1_375_000);
+        assertThat(later.rulesFromEarlierYear()).isTrue();
+        assertThat(later.rules()).contains("check FY 2026-27");
+        assertThat(later.annualTax()).isEqualByComparingTo("78000");
+    }
 }

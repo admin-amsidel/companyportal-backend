@@ -90,6 +90,9 @@ public class Employee {
 
     private LocalDate joinedDate;
 
+    /** Last working day, once the person is leaving or has left: salary is paid up to it, nothing after. */
+    private LocalDate exitDate;
+
     private LocalDate dob;
 
     @Column(length = 3)

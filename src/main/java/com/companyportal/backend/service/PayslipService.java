@@ -5,12 +5,14 @@
 package com.companyportal.backend.service;
 
 import com.companyportal.backend.dto.PayrollViews.Person;
+import com.companyportal.backend.dto.PayrollViews.PlanMonthView;
 import com.companyportal.backend.dto.PayrollViews.SalaryView;
 import com.companyportal.backend.dto.PayslipDtos.*;
 import com.companyportal.backend.entity.*;
 import com.companyportal.backend.exception.ApiException;
 import com.companyportal.backend.exception.ResourceNotFoundException;
 import com.companyportal.backend.repository.EmployeeRepository;
+import com.companyportal.backend.repository.PayrollTaxYearRepository;
 import com.companyportal.backend.repository.PayslipRepository;
 import com.companyportal.backend.repository.SalaryStructureRepository;
 import com.companyportal.backend.security.AuthUser;
@@ -26,21 +28,16 @@ import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneId;
 import java.time.format.TextStyle;
-import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * Monthly payslips made from each employee's salary for the year.
- * Making one: the month has the salary's working days (default 30; payroll may set the month's own). Per-day pay =
- * monthly earnings / working days; earnings are paid for the paid days = working days employed - LOP days (a salary
- * starting mid-month counts its working days, i.e. not the weekly offs, from the start date). Deductions and
- * reimbursements are the salary's amounts. Income tax (New or Old regime) is worked out again for the month whenever a
- * draft is made, saved or made again: the year's income expected, less the tax of the earlier months, over the months
- * left (see workOutTax); a Manual tax salary keeps the amount typed.
- * Payroll can change any amount while it is a DRAFT, then publishes it and records the salary as credited (when,
- * bank / cash / UPI, reference). The employee sees a payslip only when it is published and credited.
+ * Monthly payslips made from each employee's salary for the year. The amounts are worked out by PayEngine (days,
+ * revisions, EPF, ESI, professional tax and income tax); a new draft takes the month's approved unpaid leave as its
+ * loss-of-pay days. Payroll can change the days and any amount while it is a DRAFT (what payroll works out follows),
+ * then publishes it and records the salary as credited (when, bank / cash / UPI, reference). The employee sees a payslip
+ * only when it is published and credited.
  * Who sees whose: as for salaries (PayrollAccess).
  */
 @Service
@@ -48,20 +45,20 @@ import java.util.stream.Collectors;
 public class PayslipService {
 
     private static final BigDecimal ZERO = BigDecimal.ZERO.setScale(2);
+    private static final BigDecimal HALF = new BigDecimal("0.5");
 
     private final PayslipRepository payslipRepository;
     private final SalaryStructureRepository salaryRepository;
+    private final PayrollTaxYearRepository taxYearRepository;
     private final EmployeeRepository employeeRepository;
     private final PayrollAccess access;
     private final PayrollService payrollService;
     private final TeamAccess teamAccess;
+    private final PayEngine engine;
+    private final LeaveService leaveService;
 
     @Value("${app.leave.zone:Asia/Kolkata}")
     private String zone;
-
-    /** Days the office is closed every week (as for leave), left out when counting a part month's working days. */
-    @Value("${app.leave.weekly-offs:SUNDAY}")
-    private Set<java.time.DayOfWeek> weeklyOffs;
 
     @Value("${app.payslip.company-name:My Company}")
     private String companyName;
@@ -75,8 +72,8 @@ public class PayslipService {
     public MonthView month(AuthUser me, int year, int month) {
         YearMonth ym = yearMonth(year, month);
         int fy = fyOf(ym);
-        Map<Long, SalaryStructure> salaries = salaryRepository.ofYear(fy).stream()
-                .collect(Collectors.toMap(s -> s.getEmployee().getId(), Function.identity()));
+        Map<Long, List<SalaryStructure>> salaries = salaryRepository.ofYear(fy).stream()
+                .collect(Collectors.groupingBy(s -> s.getEmployee().getId()));
         Map<Long, Payslip> payslips = payslipRepository.ofMonth(year, month).stream()
                 .collect(Collectors.toMap(p -> p.getEmployee().getId(), Function.identity()));
         List<Row> rows = new ArrayList<>();
@@ -86,18 +83,20 @@ public class PayslipService {
         int published = 0;
         int credited = 0;
         for (Employee e : access.people(me)) {
-            SalaryStructure s = salaries.get(e.getId());
+            List<SalaryStructure> revs = salaries.get(e.getId());
             Payslip p = payslips.get(e.getId());
-            boolean salarySet = s != null && !s.getEffectiveFrom().isAfter(ym.atEndOfMonth());
-            if (p == null && (!e.isActive() || !salarySet)) {
+            boolean salarySet = PayEngine.employedIn(e, revs, ym);
+            if (p == null && (!payable(e) || !salarySet)) {
                 if (e.isActive()) {
-                    rows.add(new Row(Person.of(e), false, null, null, 0, 0, 0, money(List.of()), access.editable(me, e), null, null));
+                    rows.add(new Row(Person.of(e), false, null, null, 0, BigDecimal.ZERO, BigDecimal.ZERO, money(List.of()),
+                            access.editable(me, e), null, null));
                 }
                 continue;
             }
             eligible++;
             if (p == null) {
-                rows.add(new Row(Person.of(e), true, null, null, s.getWorkingDays(), 0, 0, money(List.of()), access.editable(me, e), null, null));
+                rows.add(new Row(Person.of(e), true, null, null, revs.getLast().getWorkingDays(), BigDecimal.ZERO, BigDecimal.ZERO,
+                        money(List.of()), access.editable(me, e), null, null));
                 continue;
             }
             Money m = money(p.getLines());
@@ -116,14 +115,14 @@ public class PayslipService {
         return new MonthView(year, month, label(ym), fy, rows, eligible, drafts, published, credited, sum(made));
     }
 
-    /** Draft payslips for everyone (or these people) with a salary that month and no payslip yet. */
+    /** Draft payslips for everyone (or these people) paid for any day of the month, with no payslip yet. */
     @Transactional
     public GenerateResult generate(AuthUser me, Generate body) {
         YearMonth ym = yearMonth(body.getYear(), body.getMonth());
         int fy = fyOf(ym);
         Set<Long> only = body.getEmployeeIds() == null || body.getEmployeeIds().isEmpty() ? null : Set.copyOf(body.getEmployeeIds());
-        Map<Long, SalaryStructure> salaries = salaryRepository.ofYear(fy).stream()
-                .collect(Collectors.toMap(s -> s.getEmployee().getId(), Function.identity()));
+        Map<Long, List<SalaryStructure>> salaries = salaryRepository.ofYear(fy).stream()
+                .collect(Collectors.groupingBy(s -> s.getEmployee().getId()));
         Employee by = employeeRepository.getReferenceById(me.id());
         int created = 0;
         int skipped = 0;
@@ -132,8 +131,8 @@ public class PayslipService {
             if (only != null && !only.contains(e.getId())) {
                 continue;
             }
-            SalaryStructure s = salaries.get(e.getId());
-            if (!e.isActive() || s == null || s.getEffectiveFrom().isAfter(ym.atEndOfMonth())) {
+            List<SalaryStructure> revs = salaries.get(e.getId());
+            if (!payable(e) || !PayEngine.employedIn(e, revs, ym)) {
                 if (only != null) {
                     skipped++;
                     notes.add(e.getName() + ": no salary for " + label(ym));
@@ -149,6 +148,10 @@ public class PayslipService {
                 skipped++;
                 continue;
             }
+            PayEngine.Context ctx = context(e, fy);
+            int working = body.getWorkingDays() != null ? body.getWorkingDays() : engine.workingDaysOf(ctx, ym);
+            BigDecimal unpaid = leaveService.unpaidDays(e, ym.atDay(1), ym.atEndOfMonth());
+            PayEngine.MonthPay pay = engine.month(ctx, ym, working, unpaid, null, null).pay();
             Payslip p = new Payslip();
             p.setEmployee(e);
             p.setFyStartYear(fy);
@@ -157,8 +160,8 @@ public class PayslipService {
             p.setPayDate(ym.atEndOfMonth());
             p.setDesignationName(e.getDesignation() == null ? null : e.getDesignation().getName());
             p.setUpdatedBy(by);
-            fill(p, s, ym, body.getWorkingDays() != null ? body.getWorkingDays() : s.getWorkingDays(), 0);
-            applyTax(p, s);
+            p.setUnpaidLeaveDays(unpaid.signum() > 0 ? unpaid : null);
+            fill(p, pay);
             payslipRepository.save(p);
             created++;
         }
@@ -184,29 +187,10 @@ public class PayslipService {
         if (body.getPayDate().isBefore(ym.atDay(1)) || body.getPayDate().isAfter(ym.atEndOfMonth().plusDays(15))) {
             throw ApiException.badRequest("The pay date must be in " + label(ym) + " or within 15 days after it");
         }
-        if (body.getWorkingDays() != null && body.getWorkingDays() != p.getWorkingDays()) {
-            int working = body.getWorkingDays();
-            LocalDate start = salaryRepository.find(e.getId(), p.getFyStartYear()).map(SalaryStructure::getEffectiveFrom).orElse(ym.atDay(1));
-            p.setWorkingDays(working);
-            p.setEmployedDays(employedDays(start, ym, working));
-        }
-        if (body.getLopDays() > p.getEmployedDays()) {
-            throw ApiException.badRequest("Unpaid (LOP) days cannot be more than the " + p.getEmployedDays()
-                    + " working days employed this month");
-        }
-        Map<Long, PayslipLine> lines = p.getLines().stream().collect(Collectors.toMap(PayslipLine::getId, Function.identity()));
-        for (LineAmount la : body.getLines()) {
-            PayslipLine l = lines.get(la.getId());
-            if (l == null) {
-                throw ApiException.badRequest("Line " + la.getId() + " is not on this payslip");
-            }
-            l.setAmount(la.getAmount().setScale(2, RoundingMode.HALF_UP));
-        }
+        int working = body.getWorkingDays() != null ? body.getWorkingDays() : p.getWorkingDays();
+        PayEngine.MonthPay pay = work(p, e, working, body.getLopDays(), typed(p, body.getLines())).pay();
         p.setPayDate(body.getPayDate());
-        p.setLopDays(body.getLopDays());
-        p.setPaidDays(p.getEmployedDays() - body.getLopDays());
-        // the income tax follows the pay (New or Old regime), whatever was typed in its line
-        applyTax(p, salaryRepository.find(e.getId(), p.getFyStartYear()).orElse(null));
+        fill(p, pay);
         if (money(p.getLines()).net().signum() < 0) {
             throw ApiException.badRequest("Deductions are more than the pay; check the amounts");
         }
@@ -217,7 +201,27 @@ public class PayslipService {
         return view(payslipRepository.saveAndFlush(p), true, true);
     }
 
-    /** Makes a draft again from the current salary (after the salary was changed), keeping its unpaid days. */
+    /** The draft as it would be with these days and amounts; nothing is saved. */
+    @Transactional(readOnly = true)
+    public PayslipPreview preview(AuthUser me, Long id, Preview body) {
+        Payslip p = full(id);
+        Employee e = access.visible(me, p.getEmployee().getId());
+        access.requireEditable(me, e);
+        int working = body.getWorkingDays() != null ? body.getWorkingDays() : p.getWorkingDays();
+        PayEngine.MonthResult r = work(p, e, working, body.getLopDays(), body.isReset() ? null : typed(p, body.getLines()));
+        Map<Long, Long> lineIds = p.getLines().stream().filter(l -> l.getComponent() != null)
+                .collect(Collectors.toMap(l -> l.getComponent().getId(), PayslipLine::getId, (a, b) -> a));
+        Map<String, BigDecimal> ytd = ytdBefore(p, true);
+        List<LineView> lines = r.pay().lines().stream()
+                .map(l -> new LineView(lineIds.get(l.component().getId()), l.component().getCode(), l.component().getName(),
+                        l.component().getKind(), l.component().isTax(), l.fullAmount(), l.amount(),
+                        ytd.getOrDefault(l.component().getCode(), ZERO).add(l.amount()), l.auto()))
+                .toList();
+        return new PayslipPreview(r.pay().workingDays(), r.pay().employedDays(), r.pay().lopDays(), r.pay().paidDays(), lines,
+                money(r.pay()), tax(r.tax(), r.pay()));
+    }
+
+    /** Makes a draft again from the current salary (after it was changed), keeping its days. */
     @Transactional
     public PayslipView recalculate(AuthUser me, Long id) {
         Payslip p = full(id);
@@ -226,16 +230,12 @@ public class PayslipService {
         if (p.getStatus() == PayslipStatus.PUBLISHED) {
             throw ApiException.conflict("This payslip is published; move it back to draft to change it");
         }
-        SalaryStructure s = salaryRepository.find(e.getId(), p.getFyStartYear())
-                .orElseThrow(() -> ApiException.conflict("There is no salary for " + e.getName() + " that year any more"));
         YearMonth ym = YearMonth.of(p.getPeriodYear(), p.getPeriodMonth());
-        if (s.getEffectiveFrom().isAfter(ym.atEndOfMonth())) {
-            throw ApiException.conflict("The salary now starts after " + label(ym));
+        PayEngine.MonthPay pay = work(p, e, p.getWorkingDays(), p.getLopDays(), null).pay();
+        if (pay.employedDays() == 0) {
+            throw ApiException.conflict("There is no salary for " + e.getName() + " in " + label(ym) + " any more");
         }
-        p.getLines().clear();
-        payslipRepository.flush();
-        fill(p, s, ym, p.getWorkingDays(), p.getLopDays());
-        applyTax(p, s);
+        fill(p, pay);
         p.setUpdatedBy(employeeRepository.getReferenceById(me.id()));
         return view(payslipRepository.saveAndFlush(p), true, true);
     }
@@ -419,10 +419,15 @@ public class PayslipService {
                     p == null ? null : tax(p.getLines())));
         }
 
+        // what the year pays: payslips as made, the months to come worked out (PayEngine)
         BigDecimal expectedGross = salary.set() ? salary.totals().yearGross() : ZERO;
         BigDecimal expectedNet = salary.set() ? salary.totals().yearNet() : ZERO;
-        BigDecimal monthlyTax = salary.lines().stream().filter(l -> l.tax()).map(l -> l.monthly()).reduce(ZERO, BigDecimal::add);
-        BigDecimal expectedTax = salary.set() ? monthlyTax.multiply(BigDecimal.valueOf(salary.totals().monthsInYear())) : ZERO;
+        BigDecimal expectedTax = ZERO;
+        if (salary.set()) {
+            for (PlanMonthView pm : salary.plan()) {
+                expectedTax = expectedTax.add(pm.incomeTax()).add(pm.professionalTax());
+            }
+        }
         BigDecimal balance = expectedGross.subtract(earned).max(ZERO);
         Dashboard d = new Dashboard(expectedGross, expectedNet, expectedTax, earned, received, taxes, balance, mine.size(),
                 salary.set() ? salary.totals().monthsInYear() : 0);
@@ -444,179 +449,93 @@ public class PayslipService {
         return view(p, false, false);
     }
 
-    /** This month's income tax for the amounts being typed on a draft (nothing saved); null for a Manual tax salary. */
-    @Transactional(readOnly = true)
-    public PayslipTax taxPreview(AuthUser me, Long id, TaxPreview body) {
-        Payslip p = full(id);
-        Employee e = access.visible(me, p.getEmployee().getId());
-        access.requireEditable(me, e);
-        Map<Long, BigDecimal> typed = new HashMap<>();
-        for (LineAmount la : body.getLines()) {
-            typed.put(la.getId(), la.getAmount());
-        }
-        SalaryStructure s = salaryRepository.find(e.getId(), p.getFyStartYear()).orElse(null);
-        return workOutTax(p, s, l -> typed.getOrDefault(l.getId(), l.getAmount()));
+    // ---- working it out ----
+
+    private PayEngine.Context context(Employee e, int fy) {
+        return engine.context(e, fy, salaryRepository.revisions(e.getId(), fy), taxYearRepository.find(e.getId(), fy).orElse(null),
+                payslipRepository.ofEmployeeYear(e.getId(), fy));
     }
 
-    // ---- income tax ----
-
-    /** Puts this month's income tax in the payslip's Income Tax line (New or Old regime; Manual keeps what is typed). */
-    private void applyTax(Payslip p, SalaryStructure s) {
-        PayslipTax t = workOutTax(p, s, PayslipLine::getAmount);
-        if (t != null) {
-            taxLine(p.getLines()).setAmount(t.monthTax());
-        }
-    }
-
-    /**
-     * This month's income tax under the salary's regime, as payroll does monthly TDS: the year's income expected =
-     * the earlier months of the year (their payslips; a month with none counts at the salary's amounts) + this month
-     * + the months to come at the salary's amounts; its tax under the regime, less the tax of the earlier months,
-     * spread over this month and the months to come. Loss of pay, a part month or a changed amount so changes the tax.
-     * Null when the salary's tax is typed in (Manual) or the payslip has no Income Tax line.
-     */
-    private PayslipTax workOutTax(Payslip p, SalaryStructure s, Function<PayslipLine, BigDecimal> amount) {
-        if (s == null || s.regime() == TaxRegime.MANUAL || taxLine(p.getLines()) == null) {
-            return null;
+    /** This payslip's month with these days and typed amounts (the payslip itself left out of the year's payslips). */
+    private PayEngine.MonthResult work(Payslip p, Employee e, int working, BigDecimal lop, Map<Long, BigDecimal> typed) {
+        if (lop.remainder(HALF).signum() != 0) {
+            throw ApiException.badRequest("LOP days are whole or half days, e.g. 1.5");
         }
         YearMonth ym = YearMonth.of(p.getPeriodYear(), p.getPeriodMonth());
-        int fy = p.getFyStartYear();
-        BigDecimal salaryGross = ZERO;
-        BigDecimal salaryPt = ZERO;
-        BigDecimal salaryTax = ZERO;
-        for (SalaryLine l : s.getLines()) {
-            PayComponent c = l.getComponent();
-            if (c.getKind() == PayComponentKind.EARNING) {
-                salaryGross = salaryGross.add(l.getMonthlyAmount());
-            } else if (isPt(c.getCode())) {
-                salaryPt = salaryPt.add(l.getMonthlyAmount());
-            } else if (isTds(c.getCode())) {
-                salaryTax = salaryTax.add(l.getMonthlyAmount());
-            }
+        PayEngine.MonthResult r = engine.month(context(e, p.getFyStartYear()), ym, working, lop, typed, p.getId());
+        if (lop.compareTo(BigDecimal.valueOf(r.pay().employedDays())) > 0) {
+            throw ApiException.badRequest("Unpaid (LOP) days cannot be more than the " + r.pay().employedDays()
+                    + " days employed this month");
         }
-        Map<YearMonth, Payslip> made = new HashMap<>();
-        for (Payslip other : payslipRepository.ofEmployeeYear(p.getEmployee().getId(), fy)) {
-            if (!Objects.equals(other.getId(), p.getId())) {
-                made.put(YearMonth.of(other.getPeriodYear(), other.getPeriodMonth()), other);
-            }
+        return r;
+    }
+
+    /** The amounts typed, by component: a line given by its id, or by its component's code. */
+    private static Map<Long, BigDecimal> typed(Payslip p, List<LineAmount> amounts) {
+        if (amounts == null) {
+            return Map.of();
         }
-        BigDecimal income = ZERO;
-        BigDecimal pt = ZERO;
-        BigDecimal before = ZERO;
-        YearMonth first = YearMonth.from(s.getEffectiveFrom()).isAfter(YearMonth.of(fy, 4)) ? YearMonth.from(s.getEffectiveFrom()) : YearMonth.of(fy, 4);
-        // the earlier months: as paid, or at the salary's amounts when no payslip was made
-        for (YearMonth m = YearMonth.of(fy, 4); m.isBefore(ym); m = m.plusMonths(1)) {
-            Payslip earlier = made.get(m);
-            if (earlier != null) {
-                for (PayslipLine l : earlier.getLines()) {
-                    if (l.getKind() == PayComponentKind.EARNING) {
-                        income = income.add(l.getAmount());
-                    } else if (isPt(l.getCode())) {
-                        pt = pt.add(l.getAmount());
-                    } else if (isTds(l.getCode())) {
-                        before = before.add(l.getAmount());
-                    }
+        Map<Long, PayslipLine> byId = p.getLines().stream().collect(Collectors.toMap(PayslipLine::getId, Function.identity()));
+        Map<String, Long> byCode = p.getLines().stream().filter(l -> l.getComponent() != null)
+                .collect(Collectors.toMap(l -> l.getCode().toUpperCase(Locale.ROOT), l -> l.getComponent().getId(), (a, b) -> a));
+        Map<Long, BigDecimal> out = new HashMap<>();
+        for (LineAmount la : amounts) {
+            Long componentId;
+            if (la.getId() != null) {
+                PayslipLine l = byId.get(la.getId());
+                if (l == null) {
+                    throw ApiException.badRequest("Line " + la.getId() + " is not on this payslip");
                 }
-            } else if (!m.isBefore(first)) {
-                income = income.add(salaryGross);
-                pt = pt.add(salaryPt);
-                before = before.add(salaryTax);
+                componentId = l.getComponent() == null ? null : l.getComponent().getId();
+            } else {
+                componentId = la.getCode() == null ? null : byCode.get(la.getCode().toUpperCase(Locale.ROOT));
+            }
+            if (componentId != null) {
+                out.put(componentId, la.getAmount());
             }
         }
-        // this month
-        for (PayslipLine l : p.getLines()) {
-            if (l.getKind() == PayComponentKind.EARNING) {
-                income = income.add(nz(amount.apply(l)));
-            } else if (isPt(l.getCode())) {
-                pt = pt.add(nz(amount.apply(l)));
-            }
-        }
-        // the months to come, at the salary's amounts
-        YearMonth next = ym.plusMonths(1).isBefore(first) ? first : ym.plusMonths(1);
-        int left = Math.max(0, (int) ChronoUnit.MONTHS.between(next, YearMonth.of(fy + 1, 3)) + 1);
-        income = income.add(salaryGross.multiply(BigDecimal.valueOf(left)));
-        pt = pt.add(salaryPt.multiply(BigDecimal.valueOf(left)));
-
-        IncomeTax.Calc year = IncomeTax.calc(s.regime(), fy, income, pt, s.getTaxDeclared(), 1);
-        BigDecimal month = year.annualTax().subtract(before).max(BigDecimal.ZERO)
-                .divide(BigDecimal.valueOf(left + 1L), 0, RoundingMode.HALF_UP).setScale(2);
-        return new PayslipTax(s.regime(), year.rules(), year.income(), year.annualTax(), before.setScale(2, RoundingMode.HALF_UP), left, month);
+        return out;
     }
 
-    private static PayslipLine taxLine(Collection<PayslipLine> lines) {
-        return lines.stream().filter(l -> l.getKind() == PayComponentKind.DEDUCTION && isTds(l.getCode())).findFirst().orElse(null);
-    }
-
-    /** The Income Tax component's code, as on salaries. */
-    private static boolean isTds(String code) {
-        return "TDS".equalsIgnoreCase(code);
-    }
-
-    /** Professional tax (taken off the income under the old regime). */
-    private static boolean isPt(String code) {
-        return "PT".equalsIgnoreCase(code);
-    }
-
-    private static BigDecimal nz(BigDecimal v) {
-        return v == null ? ZERO : v;
-    }
-
-    // ---- making and showing ----
-
-    /** The lines from the salary: earnings for the paid days, deductions and reimbursements as they are. */
-    private void fill(Payslip p, SalaryStructure s, YearMonth ym, int workingDays, int lopDays) {
-        int employed = employedDays(s.getEffectiveFrom(), ym, workingDays);
-        int lop = Math.min(lopDays, employed);
-        int paid = employed - lop;
+    /** The payslip's days and lines, as worked out; a line that stays keeps its id. */
+    private static void fill(Payslip p, PayEngine.MonthPay pay) {
+        YearMonth ym = YearMonth.of(p.getPeriodYear(), p.getPeriodMonth());
         p.setDaysInMonth(ym.lengthOfMonth());
-        p.setWorkingDays(workingDays);
-        p.setEmployedDays(employed);
-        p.setLopDays(lop);
-        p.setPaidDays(paid);
-        List<SalaryLine> sorted = s.getLines().stream()
-                .sorted(Comparator.comparing((SalaryLine l) -> l.getComponent().getKind().ordinal())
-                        .thenComparingInt(l -> l.getComponent().getSortOrder()))
-                .toList();
+        p.setWorkingDays(pay.workingDays());
+        p.setEmployedDays(pay.employedDays());
+        p.setLopDays(pay.lopDays());
+        p.setPaidDays(pay.paidDays());
+        Map<Long, PayslipLine> kept = new HashMap<>();
+        for (PayslipLine l : p.getLines()) {
+            if (l.getComponent() != null) {
+                kept.putIfAbsent(l.getComponent().getId(), l);
+            }
+        }
+        Set<Long> worked = pay.lines().stream().map(l -> l.component().getId()).collect(Collectors.toSet());
+        p.getLines().removeIf(l -> l.getComponent() == null || !worked.contains(l.getComponent().getId()) || kept.get(l.getComponent().getId()) != l);
         int order = 0;
-        for (SalaryLine sl : sorted) {
-            PayComponent c = sl.getComponent();
-            PayslipLine l = new PayslipLine();
-            l.setPayslip(p);
+        for (PayEngine.Line line : pay.lines()) {
+            PayComponent c = line.component();
+            PayslipLine l = kept.get(c.getId());
+            if (l == null) {
+                l = new PayslipLine();
+                l.setPayslip(p);
+                p.getLines().add(l);
+            }
             l.setComponent(c);
             l.setCode(c.getCode());
             l.setName(c.getName());
             l.setKind(c.getKind());
             l.setTax(c.isTax());
             l.setSortOrder(order += 10);
-            l.setFullAmount(sl.getMonthlyAmount());
-            l.setAmount(c.getKind() == PayComponentKind.EARNING ? forDays(sl.getMonthlyAmount(), paid, workingDays) : sl.getMonthlyAmount());
-            p.getLines().add(l);
+            l.setFullAmount(line.fullAmount());
+            l.setAmount(line.amount());
         }
     }
 
-    /**
-     * Working days employed this month: all of them, or for a salary starting in this month, the days from the start
-     * that are not weekly offs (no more than the month's working days).
-     */
-    int employedDays(LocalDate start, YearMonth ym, int workingDays) {
-        if (!start.isAfter(ym.atDay(1))) {
-            return workingDays;
-        }
-        int count = 0;
-        for (LocalDate d = start; !d.isAfter(ym.atEndOfMonth()); d = d.plusDays(1)) {
-            if (!weeklyOffs.contains(d.getDayOfWeek())) {
-                count++;
-            }
-        }
-        return Math.min(count, workingDays);
-    }
-
-    /** Pay for the paid days: monthly / working days x paid days, to the rupee (the full amount for a full month). */
-    static BigDecimal forDays(BigDecimal monthly, int paid, int days) {
-        if (paid >= days) {
-            return monthly.setScale(2, RoundingMode.HALF_UP);
-        }
-        return monthly.multiply(BigDecimal.valueOf(paid)).divide(BigDecimal.valueOf(days), 0, RoundingMode.HALF_UP).setScale(2);
+    /** Paid for its days: still employed, or left (exit date) and owed the last month. */
+    private static boolean payable(Employee e) {
+        return e.isActive() || e.getExitDate() != null;
     }
 
     /** The employee sees a payslip once it is published and the salary is credited. */
@@ -630,12 +549,8 @@ public class PayslipService {
         p.setPublishedBy(employeeRepository.getReferenceById(me.id()));
     }
 
-    /**
-     * The payslip with year-to-date amounts per line: this payslip plus the person's published payslips of the year
-     * up to this month (for a draft, payroll sees its year to date as if it were published). For the employee, only
-     * what they can see counts (published and credited).
-     */
-    private PayslipView view(Payslip p, boolean editable, boolean forPayroll) {
+    /** The person's published payslips of the year before this one's month, by component code (for the employee: credited ones). */
+    private Map<String, BigDecimal> ytdBefore(Payslip p, boolean forPayroll) {
         int key = p.getPeriodYear() * 12 + p.getPeriodMonth();
         Map<String, BigDecimal> ytd = new HashMap<>();
         for (Payslip other : payslipRepository.ofEmployeeYear(p.getEmployee().getId(), p.getFyStartYear())) {
@@ -646,9 +561,30 @@ public class PayslipService {
             }
             other.getLines().forEach(l -> ytd.merge(l.getCode(), l.getAmount(), BigDecimal::add));
         }
+        return ytd;
+    }
+
+    /**
+     * The payslip with year-to-date amounts per line: this payslip plus the person's published payslips of the year
+     * up to this month (for a draft, payroll sees its year to date as if it were published). For the employee, only
+     * what they can see counts (published and credited).
+     */
+    private PayslipView view(Payslip p, boolean editable, boolean forPayroll) {
+        Map<String, BigDecimal> ytd = ytdBefore(p, forPayroll);
+        PayslipTax tax = null;
+        Set<String> auto = Set.of();
+        if (forPayroll && p.getStatus() == PayslipStatus.DRAFT) {
+            Map<Long, BigDecimal> typed = p.getLines().stream().filter(l -> l.getComponent() != null)
+                    .collect(Collectors.toMap(l -> l.getComponent().getId(), PayslipLine::getAmount, (a, b) -> a));
+            PayEngine.MonthResult r = engine.month(context(p.getEmployee(), p.getFyStartYear()), YearMonth.of(p.getPeriodYear(), p.getPeriodMonth()),
+                    p.getWorkingDays(), p.getLopDays(), typed, p.getId());
+            tax = tax(r.tax(), r.pay());
+            auto = r.pay().lines().stream().filter(PayEngine.Line::auto).map(l -> l.component().getCode()).collect(Collectors.toSet());
+        }
+        final Set<String> worked = auto;
         List<LineView> lines = p.getLines().stream()
                 .map(l -> new LineView(l.getId(), l.getCode(), l.getName(), l.getKind(), l.isTax(), l.getFullAmount(),
-                        l.getAmount(), ytd.getOrDefault(l.getCode(), ZERO).add(l.getAmount())))
+                        l.getAmount(), ytd.getOrDefault(l.getCode(), ZERO).add(l.getAmount()), worked.contains(l.getCode())))
                 .toList();
         Money m = money(p.getLines());
         YearMonth ym = YearMonth.of(p.getPeriodYear(), p.getPeriodMonth());
@@ -656,15 +592,22 @@ public class PayslipService {
                 p.getDesignationName() != null ? p.getDesignationName()
                         : p.getEmployee().getDesignation() == null ? null : p.getEmployee().getDesignation().getName(),
                 p.getPeriodYear(), p.getPeriodMonth(), label(ym), p.getFyStartYear(), p.getStatus(), p.getPayDate(),
-                p.getDaysInMonth(), p.getWorkingDays(), p.getEmployedDays(), p.getLopDays(), p.getPaidDays(), lines, m,
+                p.getDaysInMonth(), p.getWorkingDays(), p.getEmployedDays(), p.getLopDays(), p.getPaidDays(),
+                forPayroll ? p.getUnpaidLeaveDays() : null, lines, m,
                 RupeesInWords.of(m.net()),
                 company(p.getEmployee().getBrand()), forPayroll && editable,
                 p.getPublishedBy() == null ? null : p.getPublishedBy().getName(), p.getPublishedAt(), p.getUpdatedAt(),
                 p.getPaidOn(), p.getPaymentMode(), p.getPaymentRef(), forPayroll ? p.getPaymentRemarks() : null,
-                p.getPaidRecordedBy() == null ? null : p.getPaidRecordedBy().getName(),
-                forPayroll && p.getStatus() == PayslipStatus.DRAFT
-                        ? workOutTax(p, salaryRepository.find(p.getEmployee().getId(), p.getFyStartYear()).orElse(null), PayslipLine::getAmount)
-                        : null);
+                p.getPaidRecordedBy() == null ? null : p.getPaidRecordedBy().getName(), tax);
+    }
+
+    /** The month's income tax as payroll does monthly TDS; null for a Manual tax year. */
+    private static PayslipTax tax(PayEngine.TaxWork t, PayEngine.MonthPay pay) {
+        if (t == null || t.calc() == null) {
+            return null;
+        }
+        return new PayslipTax(t.regime(), t.calc().rules(), t.calc().income(), t.calc().annualTax(), t.taxBefore(),
+                Math.max(0, t.openMonths() - 1), pay.amountOf(PayEngine.TDS), t.calc().rulesFromEarlierYear());
     }
 
     /** The person's brand: its name, address, GST number and logo; the company settings fill in what is missing. */
@@ -678,6 +621,13 @@ public class PayslipService {
 
     private static String blank(String s) {
         return s == null || s.isBlank() ? null : s;
+    }
+
+    private static Money money(PayEngine.MonthPay pay) {
+        BigDecimal gross = pay.gross();
+        BigDecimal deductions = pay.total(PayComponentKind.DEDUCTION);
+        BigDecimal reimbursements = pay.total(PayComponentKind.REIMBURSEMENT);
+        return new Money(gross, deductions, reimbursements, gross.subtract(deductions).add(reimbursements));
     }
 
     private static Money money(Collection<PayslipLine> lines) {

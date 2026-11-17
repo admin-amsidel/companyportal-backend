@@ -79,9 +79,14 @@ class PayrollTest {
                 .andExpect(jsonPath("$.totals.monthlyNet").value(214945.00))
                 .andExpect(jsonPath("$.totals.annualGross").value(2863824.00))
                 .andExpect(jsonPath("$.totals.annualNet").value(2579340.00))
-                // joined in September: paid September to March in this financial year
+                // joined 9 September: paid September to March in this financial year; September for its 22 days of 30
+                // (earnings and fixed deductions x 22 / 30, reimbursements and the typed tax in full: net 1,52,144),
+                // then six full months of 2,14,945
                 .andExpect(jsonPath("$.totals.monthsInYear").value(7))
-                .andExpect(jsonPath("$.totals.yearNet").value(1504615.00))
+                .andExpect(jsonPath("$.totals.yearNet").value(1441814.00))
+                .andExpect(jsonPath("$.plan[5].source").value("OPEN"))
+                .andExpect(jsonPath("$.plan[5].net").value(152144.00))
+                .andExpect(jsonPath("$.plan[4].source").value("NONE"))
                 .andExpect(jsonPath("$.lines[?(@.code == 'HRA')].annual").value(hasItem(469332.00)));
 
         mockMvc.perform(get("/api/payroll/salaries").param("fy", "2025").header("Authorization", auth(owner)))
@@ -131,6 +136,34 @@ class PayrollTest {
         // the owner sees and sets everyone's
         save(owner, admin[0], 2025, "2025-04-01", payslip()).andExpect(status().isOk())
                 .andExpect(jsonPath("$.totals.monthsInYear").value(12));
+    }
+
+    @Test
+    void aSalaryCannotStartBeforeThePersonJoined() throws Exception {
+        String emp = employee("EMPLOYEE", dw, "2025-11-01")[0];
+        save(owner, emp, 2025, "2025-04-01", payslip()).andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value(containsString("cannot start before")));
+        // from the joining date: November to March, five months
+        save(owner, emp, 2025, "2025-11-01", payslip()).andExpect(status().isOk())
+                .andExpect(jsonPath("$.totals.monthsInYear").value(5));
+    }
+
+    @Test
+    void professionalTaxSlabsAreKeptByPayroll() throws Exception {
+        mockMvc.perform(get("/api/payroll/professional-tax").header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$[0].fromIncome").value(0.0))
+                .andExpect(jsonPath("$[-1:].halfYearTax").value(hasItem(1250.0)));
+        String slabs = "{\"slabs\":[{\"fromIncome\":0,\"halfYearTax\":0},{\"fromIncome\":12000,\"halfYearTax\":120},"
+                + "{\"fromIncome\":18000,\"halfYearTax\":180},{\"fromIncome\":30000,\"halfYearTax\":300},{\"fromIncome\":45000,\"halfYearTax\":450},"
+                + "{\"fromIncome\":60000,\"halfYearTax\":600},{\"fromIncome\":75000,\"halfYearTax\":750},{\"fromIncome\":100000,\"halfYearTax\":1000},"
+                + "{\"fromIncome\":125000,\"halfYearTax\":1250}]}";
+        json(put("/api/payroll/professional-tax"), owner, slabs).andExpect(status().isOk()).andExpect(jsonPath("$.length()").value(9));
+        // the first starts at 0; no two the same
+        json(put("/api/payroll/professional-tax"), owner, "{\"slabs\":[{\"fromIncome\":100,\"halfYearTax\":0}]}").andExpect(status().isBadRequest());
+        json(put("/api/payroll/professional-tax"), owner, "{\"slabs\":[{\"fromIncome\":0,\"halfYearTax\":0},{\"fromIncome\":0,\"halfYearTax\":5}]}")
+                .andExpect(status().isBadRequest());
+        String[] emp = employee("EMPLOYEE", dw, "2025-04-01");
+        json(put("/api/payroll/professional-tax"), emp[1], slabs).andExpect(status().isForbidden());
     }
 
     @Test
@@ -214,8 +247,9 @@ class PayrollTest {
                 .andExpect(jsonPath("$.tax.regime").value("MANUAL"))
                 .andExpect(jsonPath("$.tax.canChooseRegime").value(false));
 
-        // the preview while typing: both regimes
-        json(post("/api/payroll/tax-preview?fy=2025"), hr[1], "{\"effectiveFrom\":\"2025-04-01\",\"monthlyGross\":150000,\"monthlyProfessionalTax\":200,\"declared\":200000}")
+        // the preview while typing: both regimes, for the salary being typed in place of the saved one
+        json(post("/api/payroll/tax-preview?fy=2025"), hr[1], ("{\"employeeId\":%s,\"effectiveFrom\":\"2025-04-01\",\"declared\":200000,"
+                + "\"lines\":[%s,%s]}").formatted(emp, line("BASIC", "150000"), line("PT", "200")))
                 .andExpect(jsonPath("$.NEW.annualTax").value(150800.0)).andExpect(jsonPath("$.OLD.annualTax").value(287850.0));
     }
 

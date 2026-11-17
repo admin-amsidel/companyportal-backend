@@ -77,6 +77,9 @@ public class EmployeeRequest {
     @NotNull
     private LocalDate joinedDate;
 
+    /** Last working day, once the person is leaving or has left; empty = still here. */
+    private LocalDate exitDate;
+
     @Past
     private LocalDate dob;
 

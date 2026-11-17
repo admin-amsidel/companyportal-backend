@@ -31,6 +31,10 @@ public interface TravelClaimRepository extends JpaRepository<TravelClaim, Long> 
             + " com.companyportal.backend.entity.TravelClaim.Status.TO_CONFIRM)")
     List<TravelClaim> openTrips(@Param("employeeId") Long employeeId);
 
-    @Query("select max(c.id) from TravelClaim c")
-    Long lastId();
+    /** One person's claims sent for approval or decided (approved, waiting, settled) on a meeting day: what a new claim may repeat. */
+    @Query("select c from TravelClaim c where c.employee.id = :employeeId and c.meetingDate = :day and c.status in"
+            + " (com.companyportal.backend.entity.TravelClaim.Status.SUBMITTED, com.companyportal.backend.entity.TravelClaim.Status.APPROVED,"
+            + " com.companyportal.backend.entity.TravelClaim.Status.WAITING_SETTLEMENT, com.companyportal.backend.entity.TravelClaim.Status.SETTLED)"
+            + " order by c.id")
+    List<TravelClaim> sentOn(@Param("employeeId") Long employeeId, @Param("day") LocalDate day);
 }
