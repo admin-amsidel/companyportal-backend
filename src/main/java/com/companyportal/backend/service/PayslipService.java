@@ -149,7 +149,9 @@ public class PayslipService {
                 continue;
             }
             PayEngine.Context ctx = context(e, fy);
-            int working = body.getWorkingDays() != null ? body.getWorkingDays() : engine.workingDaysOf(ctx, ym);
+            // each salary's own working days; a lower number asked for (days payable this month) is used, never more
+            int basis = engine.workingDaysOf(ctx, ym);
+            int working = body.getWorkingDays() != null ? Math.min(body.getWorkingDays(), basis) : basis;
             BigDecimal unpaid = leaveService.unpaidDays(e, ym.atDay(1), ym.atEndOfMonth());
             PayEngine.MonthPay pay = engine.month(ctx, ym, working, unpaid, null, null).pay();
             Payslip p = new Payslip();
@@ -217,7 +219,8 @@ public class PayslipService {
                         l.component().getKind(), l.component().isTax(), l.fullAmount(), l.amount(),
                         ytd.getOrDefault(l.component().getCode(), ZERO).add(l.amount()), l.auto()))
                 .toList();
-        return new PayslipPreview(r.pay().workingDays(), r.pay().employedDays(), r.pay().lopDays(), r.pay().paidDays(), lines,
+        return new PayslipPreview(r.pay().workingDays(), engine.workingDaysOf(context(e, p.getFyStartYear()),
+                YearMonth.of(p.getPeriodYear(), p.getPeriodMonth())), r.pay().employedDays(), r.pay().lopDays(), r.pay().paidDays(), lines,
                 money(r.pay()), tax(r.tax(), r.pay()));
     }
 
@@ -462,7 +465,12 @@ public class PayslipService {
             throw ApiException.badRequest("LOP days are whole or half days, e.g. 1.5");
         }
         YearMonth ym = YearMonth.of(p.getPeriodYear(), p.getPeriodMonth());
-        PayEngine.MonthResult r = engine.month(context(e, p.getFyStartYear()), ym, working, lop, typed, p.getId());
+        PayEngine.Context ctx = context(e, p.getFyStartYear());
+        int basis = engine.workingDaysOf(ctx, ym);
+        if (working > basis) {
+            throw ApiException.badRequest("Days payable cannot be more than the salary's " + basis + " working days a month");
+        }
+        PayEngine.MonthResult r = engine.month(ctx, ym, working, lop, typed, p.getId());
         if (lop.compareTo(BigDecimal.valueOf(r.pay().employedDays())) > 0) {
             throw ApiException.badRequest("Unpaid (LOP) days cannot be more than the " + r.pay().employedDays()
                     + " days employed this month");
@@ -573,10 +581,13 @@ public class PayslipService {
         Map<String, BigDecimal> ytd = ytdBefore(p, forPayroll);
         PayslipTax tax = null;
         Set<String> auto = Set.of();
+        PayEngine.Context ctx = context(p.getEmployee(), p.getFyStartYear());
+        // the salary's working days a month (a day's pay = monthly / this), as it is now; none left: the payslip's own
+        int basis = ctx.revisions().isEmpty() ? p.getWorkingDays() : engine.workingDaysOf(ctx, YearMonth.of(p.getPeriodYear(), p.getPeriodMonth()));
         if (forPayroll && p.getStatus() == PayslipStatus.DRAFT) {
             Map<Long, BigDecimal> typed = p.getLines().stream().filter(l -> l.getComponent() != null)
                     .collect(Collectors.toMap(l -> l.getComponent().getId(), PayslipLine::getAmount, (a, b) -> a));
-            PayEngine.MonthResult r = engine.month(context(p.getEmployee(), p.getFyStartYear()), YearMonth.of(p.getPeriodYear(), p.getPeriodMonth()),
+            PayEngine.MonthResult r = engine.month(ctx, YearMonth.of(p.getPeriodYear(), p.getPeriodMonth()),
                     p.getWorkingDays(), p.getLopDays(), typed, p.getId());
             tax = tax(r.tax(), r.pay());
             auto = r.pay().lines().stream().filter(PayEngine.Line::auto).map(l -> l.component().getCode()).collect(Collectors.toSet());
@@ -598,7 +609,7 @@ public class PayslipService {
                 company(p.getEmployee().getBrand()), forPayroll && editable,
                 p.getPublishedBy() == null ? null : p.getPublishedBy().getName(), p.getPublishedAt(), p.getUpdatedAt(),
                 p.getPaidOn(), p.getPaymentMode(), p.getPaymentRef(), forPayroll ? p.getPaymentRemarks() : null,
-                p.getPaidRecordedBy() == null ? null : p.getPaidRecordedBy().getName(), tax);
+                p.getPaidRecordedBy() == null ? null : p.getPaidRecordedBy().getName(), tax, basis);
     }
 
     /** The month's income tax as payroll does monthly TDS; null for a Manual tax year. */

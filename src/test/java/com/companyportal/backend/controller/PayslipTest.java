@@ -317,23 +317,27 @@ class PayslipTest {
         // the lists carry the brand's name for the Brand filter
         mockMvc.perform(get("/api/payroll/salaries").param("fy", "2025").header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.rows[*].employee.brandName", hasItem("Acme Doors & Windows")));
-        // June made with 25 working days: a full month is 25 paid days, the full amounts
+        // June made with 25 days payable (of the salary's 30): 25 paid days at the salary's day rate (PORTAL-20)
         json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":6,\"workingDays\":25,\"employeeIds\":[" + emp[0] + "]}")
                 .andExpect(jsonPath("$.created").value(1));
         String id = payslipId(emp[0], 2025, 6);
         mockMvc.perform(get("/api/payroll/payslips/" + id).header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.workingDays").value(25)).andExpect(jsonPath("$.paidDays").value(25))
-                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(97778.00)));
-        // then 22 working days and one LOP day: 21 paid; LOP cannot pass the working days
+                .andExpect(jsonPath("$.dayBasis").value(30))
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(81482.00)));
+        // then 22 days payable and one LOP day: 21 paid; LOP cannot pass the days, nor the days the salary's 30
+        json(put("/api/payroll/payslips/" + id), owner, "{\"payDate\":\"2025-06-30\",\"workingDays\":31,\"lopDays\":0,\"lines\":[],\"publish\":false}")
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.error").value("Days payable cannot be more than the salary's 30 working days a month"));
         json(put("/api/payroll/payslips/" + id), owner, "{\"payDate\":\"2025-06-30\",\"workingDays\":22,\"lopDays\":1,\"lines\":[],\"publish\":false}")
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.workingDays").value(22)).andExpect(jsonPath("$.paidDays").value(21));
         json(put("/api/payroll/payslips/" + id), owner, "{\"payDate\":\"2025-06-30\",\"workingDays\":22,\"lopDays\":23,\"lines\":[],\"publish\":false}")
                 .andExpect(status().isBadRequest());
-        // recalculating from the salary keeps the month's working days and LOP: BASIC = 97778 / 22 x 21
+        // recalculating from the salary keeps the month's days and LOP: BASIC = 97,778 / 30 x 21
         mockMvc.perform(post("/api/payroll/payslips/" + id + "/recalculate").header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.workingDays").value(22)).andExpect(jsonPath("$.paidDays").value(21))
-                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(93334.00)));
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(68445.00)));
         // the salary's own working days apply to new payslips
         json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":7,\"employeeIds\":[" + emp[0] + "]}");
         mockMvc.perform(get("/api/payroll/payslips/" + payslipId(emp[0], 2025, 7)).header("Authorization", auth(owner)))
@@ -387,6 +391,37 @@ class PayslipTest {
         mockMvc.perform(post("/api/payroll/payslips/" + id + "/recalculate").header("Authorization", auth(owner)))
                 .andExpect(jsonPath("$.lines[?(@.code == 'TDS')].amount").value(hasItem(5000.0)))
                 .andExpect(jsonPath("$.tax").doesNotExist());
+    }
+
+    @Test
+    void fewerDaysPayablePayProportionallyLessAtTheSalarysDayRate() throws Exception {
+        // PORTAL-20: a 26-day salary of 17,100 (a day = 657.69); 13 days payable with 1 LOP = 12 days, about 7,892
+        String[] emp = employee("2025-04-01");
+        String lines = "[" + String.join(",", line("BASIC", "15000"), line("DA", "1000"), line("HRA", "500"), line("LTA", "500"),
+                line("SPECIAL", "100")) + "]";
+        json(put("/api/payroll/salaries/" + emp[0] + "?fy=2025"), owner, "{\"effectiveFrom\":\"2025-04-01\",\"workingDays\":26,\"lines\":%s}"
+                .formatted(lines)).andExpect(status().isOk());
+        // made with the dialog's old 30 for everyone: never more than the salary's own 26, so a full month pays in full
+        json(post("/api/payroll/payslips/generate"), owner, "{\"year\":2025,\"month\":11,\"workingDays\":30,\"employeeIds\":[" + emp[0] + "]}")
+                .andExpect(jsonPath("$.created").value(1));
+        String id = payslipId(emp[0], 2025, 11);
+        mockMvc.perform(get("/api/payroll/payslips/" + id).header("Authorization", auth(owner)))
+                .andExpect(jsonPath("$.workingDays").value(26)).andExpect(jsonPath("$.dayBasis").value(26))
+                .andExpect(jsonPath("$.money.gross").value(17100.0));
+        // 13 days payable, 1 LOP: 12 of the salary's 26 days, each component 12 / 26 of its rate
+        json(put("/api/payroll/payslips/" + id), owner, "{\"payDate\":\"2025-11-30\",\"workingDays\":13,\"lopDays\":1,\"lines\":[],\"publish\":false}")
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.paidDays").value(12.0))
+                .andExpect(jsonPath("$.lines[?(@.code == 'BASIC')].amount").value(hasItem(6923.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'DA')].amount").value(hasItem(462.0)))
+                .andExpect(jsonPath("$.lines[?(@.code == 'SPECIAL')].amount").value(hasItem(46.0)))
+                .andExpect(jsonPath("$.money.gross").value(7893.0));
+        // the preview says the same
+        json(post("/api/payroll/payslips/" + id + "/preview"), owner, "{\"workingDays\":13,\"lopDays\":1,\"reset\":true}")
+                .andExpect(jsonPath("$.dayBasis").value(26)).andExpect(jsonPath("$.money.gross").value(7893.0));
+        // more days payable than the salary's 26 is refused
+        json(put("/api/payroll/payslips/" + id), owner, "{\"payDate\":\"2025-11-30\",\"workingDays\":27,\"lopDays\":0,\"lines\":[],\"publish\":false}")
+                .andExpect(status().isBadRequest());
     }
 
     @Test

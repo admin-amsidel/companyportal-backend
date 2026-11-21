@@ -157,8 +157,8 @@ public class PayslipPdf {
         box(t, "Bank account", or(p.employee().bankAccount())
                 + (p.employee().ifsc() == null ? "" : "\nIFSC " + p.employee().ifsc()));
         box(t, "Pay date", DATE.format(p.payDate()));
-        box(t, "Working days", String.valueOf(p.workingDays()));
-        box(t, "Paid days", days(p.paidDays()) + " of " + p.workingDays());
+        box(t, "Days payable", String.valueOf(p.workingDays()));
+        box(t, "Paid days", days(p.paidDays()) + " of " + (p.dayBasis() > 0 ? p.dayBasis() : p.workingDays()));
         box(t, "Loss of pay days", days(p.lopDays()));
         box(t, "Credited on", p.paidOn() == null ? "Not yet" : DATE.format(p.paidOn()));
         box(t, "Paid by", p.paidOn() == null ? "-" : mode(p.paymentMode())

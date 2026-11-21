@@ -22,8 +22,9 @@ import java.util.stream.Collectors;
 /**
  * The one place a month's pay is worked out: payslips, the salary screen and My pay all use it, so they always agree.
  * <p>
- * <b>Days.</b> A month has the salary's working days (30 unless set otherwise; payroll may change a payslip's). A whole
- * month employed is all of them. A month the salary starts or the person leaves in counts the calendar days employed,
+ * <b>Days.</b> A day's pay is the salary's monthly amount / its working days a month (30 unless set otherwise). A month
+ * has as many days payable as the salary's working days; payroll may lower them on a payslip, and fewer days pay
+ * proportionally less (PORTAL-20). A whole month employed is all of them. A month the salary starts or the person leaves in counts the calendar days employed,
  * weekly offs included, scaled to the working days: joining on 9 November = 22 of 30, leaving on 15 January = 15 x 30 /
  * 31 = 15. Paid days = employed days - loss-of-pay days (half days allowed).
  * <p>
@@ -247,6 +248,9 @@ public class PayEngine {
         Map<Long, BigDecimal> latestAmount = latest.getLines().stream()
                 .collect(Collectors.toMap(l -> l.getComponent().getId(), SalaryLine::getMonthlyAmount, BigDecimal::add));
         boolean blended = share.size() > 1;
+        // PORTAL-20: a day's pay is always the salary's own (monthly / its working days a month); the month's days only
+        // say how many days are payable, so fewer of them pay less
+        int basis = Math.max(1, latest.getWorkingDays());
 
         List<Line> lines = new ArrayList<>();
         for (PayComponent comp : components.values()) {
@@ -260,8 +264,8 @@ public class PayEngine {
             }
             BigDecimal full = latestAmount.getOrDefault(comp.getId(), BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP);
             BigDecimal amount = switch (comp.getKind()) {
-                case EARNING -> forDays(monthly, paid, workingDays);
-                case DEDUCTION -> TDS.equals(code) ? full : forDays(monthly, paid, workingDays);
+                case EARNING -> forDays(monthly, paid, basis);
+                case DEDUCTION -> TDS.equals(code) ? full : forDays(monthly, paid, basis);
                 case REIMBURSEMENT -> full;
             };
             if (typed != null && typed.containsKey(comp.getId())) {

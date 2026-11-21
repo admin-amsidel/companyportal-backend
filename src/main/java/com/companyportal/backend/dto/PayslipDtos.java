@@ -161,7 +161,7 @@ public final class PayslipDtos {
                               List<LineView> lines, Money money, String netInWords,
                               Company company, boolean editable, String publishedByName, Instant publishedAt,
                               Instant updatedAt, LocalDate paidOn, PaymentMode paymentMode, String paymentRef,
-                              String paymentRemarks, String paidRecordedByName, PayslipTax tax) {
+                              String paymentRemarks, String paidRecordedByName, PayslipTax tax, int dayBasis) {
     }
 
     /**
@@ -196,7 +196,8 @@ public final class PayslipDtos {
     }
 
     /** What the draft would be: its days, every line (EPF, ESI, professional tax and income tax worked out) and the tax. */
-    public record PayslipPreview(int workingDays, int employedDays, BigDecimal lopDays, BigDecimal paidDays, List<LineView> lines,
+    /** dayBasis: the salary's working days a month (a day's pay = monthly / this); workingDays: the days payable this month. */
+    public record PayslipPreview(int workingDays, int dayBasis, int employedDays, BigDecimal lopDays, BigDecimal paidDays, List<LineView> lines,
                                  Money money, PayslipTax tax) {
     }
 
