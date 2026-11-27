@@ -1,0 +1,110 @@
+{
+  "currency": "INR",
+  "settings": {
+    "wastagePct": 8,
+    "marginPct": 25,
+    "taxPct": 18,
+    "meshRatePerSqm": 350,
+    "installationRatePerSqm": 250,
+    "quoteValidityDays": 15
+  },
+  "materials": [
+    {
+      "code": "UPVC",
+      "name": "uPVC",
+      "labourRatePerSqm": 600,
+      "solidPanelRatePerSqm": 1800,
+      "reinforcementRatePerM": 90,
+      "colors": ["WHITE", "GOLDEN_OAK", "ANTHRACITE", "WALNUT"],
+      "series": [
+        { "code": "UPVC-C60", "name": "uPVC Casement 60", "kind": "CASEMENT", "frameDepth": 60, "frameFace": 58, "sashFace": 76, "mullionFace": 82, "frameRatePerM": 450, "sashRatePerM": 520, "mullionRatePerM": 480 },
+        { "code": "UPVC-S88", "name": "uPVC Sliding 2-Track 88", "kind": "SLIDING", "frameDepth": 88, "frameFace": 50, "sashFace": 70, "mullionFace": 70, "frameRatePerM": 520, "sashRatePerM": 480, "mullionRatePerM": 450 },
+        { "code": "UPVC-D70", "name": "uPVC Door 70", "kind": "DOOR", "frameDepth": 70, "frameFace": 64, "sashFace": 110, "mullionFace": 90, "frameRatePerM": 560, "sashRatePerM": 780, "mullionRatePerM": 560 }
+      ]
+    },
+    {
+      "code": "ALUMINIUM",
+      "name": "Aluminium",
+      "labourRatePerSqm": 700,
+      "solidPanelRatePerSqm": 2200,
+      "reinforcementRatePerM": 0,
+      "colors": ["SILVER", "ANTHRACITE", "BLACK", "CHAMPAGNE", "WOOD_FINISH"],
+      "series": [
+        { "code": "ALU-C50", "name": "Aluminium Casement 50", "kind": "CASEMENT", "frameDepth": 50, "frameFace": 45, "sashFace": 60, "mullionFace": 70, "frameRatePerM": 680, "sashRatePerM": 720, "mullionRatePerM": 700 },
+        { "code": "ALU-S92", "name": "Aluminium Sliding 2-Track 92", "kind": "SLIDING", "frameDepth": 92, "frameFace": 40, "sashFace": 55, "mullionFace": 60, "frameRatePerM": 640, "sashRatePerM": 600, "mullionRatePerM": 620 },
+        { "code": "ALU-D65", "name": "Aluminium Door 65", "kind": "DOOR", "frameDepth": 65, "frameFace": 55, "sashFace": 95, "mullionFace": 80, "frameRatePerM": 820, "sashRatePerM": 950, "mullionRatePerM": 820 }
+      ]
+    },
+    {
+      "code": "WPC",
+      "name": "WPC (Wood Plastic Composite)",
+      "labourRatePerSqm": 450,
+      "solidPanelRatePerSqm": 2200,
+      "reinforcementRatePerM": 0,
+      "colors": ["WPC_NATURAL", "WALNUT", "TEAK_LAMINATE", "WHITE"],
+      "series": [
+        { "code": "WPC-F100", "name": "WPC Door Frame 100x60", "kind": "DOOR", "frameDepth": 100, "frameFace": 60, "sashFace": 30, "mullionFace": 60, "frameRatePerM": 380, "sashRatePerM": 0, "mullionRatePerM": 380 },
+        { "code": "WPC-W70", "name": "WPC Window Frame 70", "kind": "CASEMENT", "frameDepth": 70, "frameFace": 55, "sashFace": 60, "mullionFace": 60, "frameRatePerM": 340, "sashRatePerM": 360, "mullionRatePerM": 340 }
+      ]
+    },
+    {
+      "code": "WOOD",
+      "name": "Wood (Teak / Sal)",
+      "labourRatePerSqm": 900,
+      "solidPanelRatePerSqm": 4500,
+      "reinforcementRatePerM": 0,
+      "colors": ["TEAK_NATURAL", "WALNUT", "MAHOGANY"],
+      "series": [
+        { "code": "WOOD-T125", "name": "Teak Frame 125x62", "kind": "DOOR", "frameDepth": 125, "frameFace": 62, "sashFace": 100, "mullionFace": 75, "frameRatePerM": 1400, "sashRatePerM": 1100, "mullionRatePerM": 1200 },
+        { "code": "WOOD-S100", "name": "Sal Window Frame 100x62", "kind": "CASEMENT", "frameDepth": 100, "frameFace": 62, "sashFace": 62, "mullionFace": 75, "frameRatePerM": 900, "sashRatePerM": 850, "mullionRatePerM": 900 }
+      ]
+    },
+    {
+      "code": "STEEL",
+      "name": "Steel",
+      "labourRatePerSqm": 650,
+      "solidPanelRatePerSqm": 3000,
+      "reinforcementRatePerM": 0,
+      "colors": ["GREY_PRIMER", "BLACK", "ANTHRACITE", "WOOD_FINISH"],
+      "series": [
+        { "code": "STL-Z16", "name": "Steel Z-Section 1.6mm", "kind": "CASEMENT", "frameDepth": 40, "frameFace": 35, "sashFace": 35, "mullionFace": 40, "frameRatePerM": 520, "sashRatePerM": 480, "mullionRatePerM": 500 },
+        { "code": "STL-D100", "name": "Steel Door Frame 100 (Pressed)", "kind": "DOOR", "frameDepth": 100, "frameFace": 50, "sashFace": 45, "mullionFace": 50, "frameRatePerM": 750, "sashRatePerM": 650, "mullionRatePerM": 700 }
+      ]
+    }
+  ],
+  "colors": [
+    { "code": "WHITE", "name": "White", "hex": "#f4f4f2", "surchargePct": 0 },
+    { "code": "GOLDEN_OAK", "name": "Golden Oak (laminate)", "hex": "#b5803f", "surchargePct": 15 },
+    { "code": "ANTHRACITE", "name": "Anthracite Grey", "hex": "#3c4044", "surchargePct": 18 },
+    { "code": "WALNUT", "name": "Walnut", "hex": "#5d4030", "surchargePct": 15 },
+    { "code": "SILVER", "name": "Silver Anodised", "hex": "#c3c7cb", "surchargePct": 0 },
+    { "code": "BLACK", "name": "Black Powder Coat", "hex": "#1f2124", "surchargePct": 10 },
+    { "code": "CHAMPAGNE", "name": "Champagne Anodised", "hex": "#cbb994", "surchargePct": 12 },
+    { "code": "WOOD_FINISH", "name": "Wood Finish Coat", "hex": "#8a5a36", "surchargePct": 20 },
+    { "code": "WPC_NATURAL", "name": "WPC Natural", "hex": "#d8c7a8", "surchargePct": 0 },
+    { "code": "TEAK_LAMINATE", "name": "Teak Laminate", "hex": "#9c6a3c", "surchargePct": 12 },
+    { "code": "TEAK_NATURAL", "name": "Teak Natural Polish", "hex": "#a0703f", "surchargePct": 0 },
+    { "code": "MAHOGANY", "name": "Mahogany Polish", "hex": "#6b2f22", "surchargePct": 8 },
+    { "code": "GREY_PRIMER", "name": "Grey Primer", "hex": "#8d9195", "surchargePct": 0 }
+  ],
+  "glass": [
+    { "code": "NONE", "name": "No glass", "ratePerSqm": 0 },
+    { "code": "CLR5", "name": "5mm Clear Float", "ratePerSqm": 450 },
+    { "code": "FRS5", "name": "5mm Frosted", "ratePerSqm": 650 },
+    { "code": "TGH6", "name": "6mm Toughened", "ratePerSqm": 950 },
+    { "code": "LAM638", "name": "6.38mm Laminated", "ratePerSqm": 1800 },
+    { "code": "DGU20", "name": "DGU 5+10+5 (Double Glazed)", "ratePerSqm": 2400 }
+  ],
+  "hardware": [
+    { "opening": "FIXED", "name": "Glazing beads & packers", "price": 80 },
+    { "opening": "CASEMENT_L", "name": "Casement set (hinges + handle + espag)", "price": 1450 },
+    { "opening": "CASEMENT_R", "name": "Casement set (hinges + handle + espag)", "price": 1450 },
+    { "opening": "TILT_TURN_L", "name": "Tilt & Turn hardware set", "price": 3800 },
+    { "opening": "TILT_TURN_R", "name": "Tilt & Turn hardware set", "price": 3800 },
+    { "opening": "TOP_HUNG", "name": "Friction stays + handle", "price": 1100 },
+    { "opening": "SLIDING_L", "name": "Rollers + crescent lock + guides", "price": 950 },
+    { "opening": "SLIDING_R", "name": "Rollers + crescent lock + guides", "price": 950 },
+    { "opening": "DOOR_L", "name": "Door set (3 hinges, lock body, cylinder, handle)", "price": 4200 },
+    { "opening": "DOOR_R", "name": "Door set (3 hinges, lock body, cylinder, handle)", "price": 4200 }
+  ]
+}

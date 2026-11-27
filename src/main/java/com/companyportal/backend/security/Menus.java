@@ -78,6 +78,8 @@ public final class Menus {
     public static final String PROD_PURCHASES = "PROD_PURCHASES";
     public static final String PROD_QUOTES = "PROD_QUOTES";
     public static final String PROD_ORDERS = "PROD_ORDERS";
+    /** Product portal > Sales > Door & window quotes: design doors and windows with drawings, priced, and quote them. */
+    public static final String PROD_WINDOW_QUOTES = "PROD_WINDOW_QUOTES";
     public static final String PROD_INVOICES = "PROD_INVOICES";
     public static final String PROD_REPORTS = "PROD_REPORTS";
     public static final String PROD_PROJECTS = "PROD_PROJECTS";
@@ -201,7 +203,7 @@ public final class Menus {
             AGENT_COMMISSIONS, AGENT_ADD, AGENT_EDIT, AGENT_COMMISSION_STATUS, ENQUIRIES);
     /** Any page of the product portal. */
     public static final String[] PRODUCT_PORTAL = {PROD_HOME, PROD_ITEMS, PROD_TYPES, PROD_SUPPLIERS, PROD_PURCHASES,
-            PROD_QUOTES, PROD_ORDERS, PROD_INVOICES, PROD_REPORTS, PROD_PROJECTS, PROD_LEDGER, PROD_RECONCILE, PROD_MAIL, PROD_PAY, PROD_PAY_MANUAL, PROD_PROJECT_STATUS, PROD_STOCK_APPROVE};
+            PROD_QUOTES, PROD_ORDERS, PROD_WINDOW_QUOTES, PROD_INVOICES, PROD_REPORTS, PROD_PROJECTS, PROD_LEDGER, PROD_RECONCILE, PROD_MAIL, PROD_PAY, PROD_PAY_MANUAL, PROD_PROJECT_STATUS, PROD_STOCK_APPROVE};
 
     /** One menu; parent null for a top-level menu, path null for a menu that only holds sub-menus. */
     public record Def(String code, String name, String description, int checkpoint, String parent, String path, String icon) {
@@ -316,6 +318,7 @@ public final class Menus {
             new Def(PROD_PURCHASES, "Purchase bills", "Goods bought: bills, stock received and payments to suppliers", 11202, "PROD_BUYING", "/portal/products/purchases", "pi-download"),
             new Def("PROD_SELLING", "Sales", "Quotations, sales orders, invoices and customer payments", 11300, null, null, "pi-shopping-cart"),
             new Def(PROD_QUOTES, "Quotations", "Quotations to customers (PDF), made into invoices", 11302, "PROD_SELLING", "/portal/products/quotations", "pi-file-edit"),
+            new Def(PROD_WINDOW_QUOTES, "Door & window quotes", "Design doors, windows and frames from a layout library (size, divisions, openings, material, colour, glass) with front and top view drawings, priced from the rate catalogue, and quote them with GST (print or save as PDF)", 11305, "PROD_SELLING", "/portal/products/window-quotes", "pi-objects-column"),
             new Def(PROD_ORDERS, "Sales orders", "The customer's confirmed order (from a quotation, items removed or changed), before the invoice; confirming it sets the project to Confirmed", 11304, "PROD_SELLING", "/portal/products/sales-orders", "pi-check-square"),
             new Def(PROD_INVOICES, "Invoices", "Final bills (PDF), stock out and customer payments", 11303, "PROD_SELLING", "/portal/products/invoices", "pi-receipt"),
             new Def("PROD_PROJECTS_GRP", "Projects", "Project portal: customer projects with their employees, agents and status updates for the customer", 11550, null, null, "pi-briefcase"),
@@ -385,6 +388,8 @@ public final class Menus {
             java.util.Map.entry(SALES_COL_ORDERS, List.of("3006", "3007", "4007", "402")),
             java.util.Map.entry(CUSTOMERS, List.of("11301", "11300")),
             java.util.Map.entry(CUST_NEW_QUOTE, List.of("11302", "11300")),
+            // whoever made quotations (or had the whole Sales menu) gets the door & window quotes too
+            java.util.Map.entry(PROD_WINDOW_QUOTES, List.of("11302", "11300")),
             java.util.Map.entry(CUST_NEW_INVOICE, List.of("11303", "11300")),
             java.util.Map.entry(CUST_ADD, List.of("13000", "11301", "11300")),
             java.util.Map.entry(CUST_EDIT, List.of("13000", "11301", "11300")),
